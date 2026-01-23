@@ -1,0 +1,9 @@
+.zig-cache/
+mgbdis/
+src copy/
+test/
+zig-out/
+gbc_bios.bin
+*.gb
+*.sav
+out.txt
