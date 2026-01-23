@@ -9,8 +9,15 @@ pub const Control = packed struct(u8) {
     enable: bool,
 };
 
+const Mode = enum(u2) {
+    HBLANK,
+    VBLANK,
+    OAM_SCAN,
+    DRAW,
+};
+
 pub const Status = packed struct(u8) {
-    ppu_mode: u2,
+    ppu_mode: Mode,
     lyc_eq_ly: bool,
     mode_0_int: bool,
     mode_1_int: bool,

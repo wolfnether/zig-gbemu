@@ -8,7 +8,7 @@ const argsParser = @import("args");
 const CYCLES_PER_FRAME = 70224;
 const SECONDE_PER_CYCLE = 0.0000002384;
 
-const OPCODE_STR = @import("opcode.zig").OPCODE_STR;
+const OPCODE_NAME = @import("opcode.zig").OPCODE_NAME;
 const OPCODE_LEN = @import("opcode.zig").OPCODE_LEN;
 
 pub fn main() !void {
@@ -30,7 +30,7 @@ pub fn main() !void {
     }, allocator, .print);
     defer options.deinit();
 
-    const boot_rom = try std.fs.cwd().readFileAlloc(allocator, "gbc_bios.bin", std.math.maxInt(usize));
+    const boot_rom = try std.fs.cwd().readFileAlloc(allocator, "cgb_boot.bin", std.math.maxInt(usize));
     defer allocator.free(boot_rom);
 
     if (options.options.file == null) {
@@ -91,15 +91,14 @@ pub fn main() !void {
 
             if (@import("builtin").mode == .Debug) {
                 if (options.options.step) {
-                    if (!(options.options.@"skip-rom-step" and context.boot_rom_mapped)) {
-                        while (true and !skip_next_frame and !(skip_next_halt and context.read_bus(context.pc.read()) != 0x76)) {
+                    if (!(options.options.@"skip-rom-step" and context.io.boot_rom_mapped)) {
+                        while (true and !skip_next_frame) {
                             skip_next_frame = false;
                             skip_next_halt = false;
                             rl.pollInputEvents();
                             if (rl.windowShouldClose()) return;
                             if (rl.isKeyPressed(.enter)) break;
                             if (rl.isKeyPressed(.v)) skip_next_frame = true;
-                            if (rl.isKeyPressed(.h)) skip_next_halt = true;
                             if (rl.isKeyDown(.space)) break;
                             rl.waitTime(0.01);
                         }
@@ -120,15 +119,15 @@ pub fn main() !void {
 
             const old_ppu_mode = context.ppu.status.ppu_mode;
 
-            const old_time = context.time;
+            const old_tick = context.ticks;
             context.step();
-            const mult: u8 = if (context.io.get(0xFF4D).read_bit(7)) 2 else 4;
+            const mult: u8 = if (context.io.speed.read_bit(7)) 2 else 4;
 
-            cycles_this_frame += (context.time - old_time) * mult;
+            cycles_this_frame += (context.ticks - old_tick) * mult;
 
             const new_ppu_mode = context.ppu.status.ppu_mode;
 
-            if (old_ppu_mode != new_ppu_mode and new_ppu_mode == 1) break;
+            if (old_ppu_mode != new_ppu_mode and new_ppu_mode == .VBLANK) break;
 
             rl.pollInputEvents();
         }

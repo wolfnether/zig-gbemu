@@ -3,7 +3,7 @@ mgbdis/
 src copy/
 test/
 zig-out/
-gbc_bios.bin
+cgb_boot.bin
 *.gb
 *.sav
 out.txt

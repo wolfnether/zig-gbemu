@@ -2,7 +2,7 @@ const std = @import("std");
 
 const GBContext = @import("gbcontext.zig");
 
-pub const OPCODE_STR: [0x100]*const [10:0]u8 = .{
+pub const OPCODE_NAME: [0x100]*const [10:0]u8 = .{
     "NOP       ",
     "LD BC,nn  ",
     "LD (BC),A ",
@@ -261,17 +261,6 @@ pub const OPCODE_STR: [0x100]*const [10:0]u8 = .{
     "RST 0x38  ",
 };
 
-pub const OPCODE_LEN: [0x100]u8 = .{
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-};
-
 pub const OPCODE: [0x100]*const fn (self: *GBContext, opcode: u8) void = blk: {
     const OpcodeMask = struct {
         mask: u8,
@@ -355,14 +344,16 @@ fn hlt(self: *GBContext, _: u8) void {
 }
 
 fn stop(self: *GBContext, _: u8) void {
-    self.set_DIV(0);
+    self.timer.set_DIV(self, 0);
 
-    const armed = self.speed & 1;
-    if (armed == 1) {
-        self.speed ^= 0x81;
-    } else {
-        self.is_stopped = true;
-    }
+    @panic("rewrite");
+
+    //const armed = self.speed & 1;
+    //if (armed == 1) {
+    //    self.speed ^= 0x81;
+    //} else {
+    //    self.is_stopped = true;
+    //}
 }
 
 fn di(self: *GBContext, _: u8) void {
@@ -392,7 +383,7 @@ fn scf(self: *GBContext, _: u8) void {
 fn rst(self: *GBContext, opcode: u8) void {
     self.push16(self.pc);
     self.pc.write(opcode & 0x38);
-    self.clock();
+    self.tick();
 }
 
 fn daa(self: *GBContext, _: u8) void {
@@ -423,7 +414,7 @@ fn daa(self: *GBContext, _: u8) void {
 fn sth_a_dir(self: *GBContext, _: u8) void {
     const register = GBContext.Register{
         .bytes = .{
-            .l = self.read_pc8_inc(),
+            .l = self.read8_at_pc_inc(),
             .h = 0xff,
         },
     };
@@ -439,7 +430,7 @@ fn sth_a_ind(self: *GBContext, _: u8) void {
 }
 
 fn st_a_dir(self: *GBContext, _: u8) void {
-    const register = self.read_pc16_inc();
+    const register = self.read16_at_pc_inc();
 
     self.write_bus(register.read(), self.get_register8(.A));
 }
@@ -455,7 +446,7 @@ fn ldh_a_ind(self: *GBContext, _: u8) void {
 fn ldh_a_dir(self: *GBContext, _: u8) void {
     const register = GBContext.Register{
         .bytes = .{
-            .l = self.read_pc8_inc(),
+            .l = self.read8_at_pc_inc(),
             .h = 0xff,
         },
     };
@@ -465,14 +456,14 @@ fn ldh_a_dir(self: *GBContext, _: u8) void {
 }
 
 fn ld_a_dir(self: *GBContext, _: u8) void {
-    const register = self.read_pc16_inc();
+    const register = self.read16_at_pc_inc();
 
     const value = self.read_bus(register.read());
     self.set_register8(.A, value);
 }
 
 fn ld_sp_dir(self: *GBContext, _: u8) void {
-    var register = self.read_pc16_inc();
+    var register = self.read16_at_pc_inc();
 
     const sp = self.sp;
 
@@ -482,8 +473,8 @@ fn ld_sp_dir(self: *GBContext, _: u8) void {
 }
 
 fn jmp(self: *GBContext, _: u8) void {
-    self.pc = self.read_pc16_inc();
-    self.clock();
+    self.pc = self.read16_at_pc_inc();
+    self.tick();
 }
 
 fn jmp_hl(self: *GBContext, _: u8) void {
@@ -491,18 +482,18 @@ fn jmp_hl(self: *GBContext, _: u8) void {
 }
 
 fn jr(self: *GBContext, _: u8) void {
-    const offset: i8 = @bitCast(self.read_pc8_inc());
+    const offset: i8 = @bitCast(self.read8_at_pc_inc());
     const addr: u32 = self.pc.read();
     var temp: i32 = @bitCast(addr);
     temp +%= offset;
     self.pc.write(@intCast(temp));
-    self.clock();
+    self.tick();
 }
 
 fn jr_cond(self: *GBContext, opcode: u8) void {
     const flags = self.get_flags();
 
-    const offset: i8 = @bitCast(self.read_pc8_inc());
+    const offset: i8 = @bitCast(self.read8_at_pc_inc());
 
     const condition = switch ((opcode >> 3) & 3) {
         0 => !flags.z,
@@ -517,14 +508,14 @@ fn jr_cond(self: *GBContext, opcode: u8) void {
         var temp: i32 = @bitCast(addr);
         temp +%= offset;
         self.pc.write(@intCast(temp));
-        self.clock();
+        self.tick();
     }
 }
 
 fn jmp_cond(self: *GBContext, opcode: u8) void {
     const flags = self.get_flags();
 
-    const new_pc = self.read_pc16_inc();
+    const new_pc = self.read16_at_pc_inc();
 
     const condition = switch ((opcode >> 3) & 3) {
         0 => !flags.z,
@@ -536,14 +527,14 @@ fn jmp_cond(self: *GBContext, opcode: u8) void {
 
     if (condition) {
         self.pc = new_pc;
-        self.clock();
+        self.tick();
     }
 }
 
 fn call_cond(self: *GBContext, opcode: u8) void {
     const flags = self.get_flags();
 
-    const new_pc = self.read_pc16_inc();
+    const new_pc = self.read16_at_pc_inc();
 
     const condition = switch ((opcode >> 3) & 3) {
         0 => !flags.z,
@@ -556,18 +547,18 @@ fn call_cond(self: *GBContext, opcode: u8) void {
     if (condition) {
         self.push16(self.pc);
         self.pc = new_pc;
-        self.clock();
+        self.tick();
     }
 }
 
 fn call(self: *GBContext, _: u8) void {
-    const register = self.read_pc16_inc();
+    const register = self.read16_at_pc_inc();
 
     self.push16(self.pc);
 
     self.pc = register;
 
-    self.clock();
+    self.tick();
 }
 
 fn ret_cond(self: *GBContext, opcode: u8) void {
@@ -581,16 +572,16 @@ fn ret_cond(self: *GBContext, opcode: u8) void {
         else => unreachable,
     };
 
-    self.clock();
+    self.tick();
     if (condition) {
         self.pc = self.pop16();
-        self.clock();
+        self.tick();
     }
 }
 
 fn ret(self: *GBContext, _: u8) void {
     self.pc = self.pop16();
-    self.clock();
+    self.tick();
 }
 
 fn reti(self: *GBContext, _: u8) void {
@@ -598,11 +589,11 @@ fn reti(self: *GBContext, _: u8) void {
 
     self.IME = true;
 
-    self.clock();
+    self.tick();
 }
 
 fn ld16imm(self: *GBContext, opcode: u8) void {
-    const dest: GBContext.Register16Name = switch ((opcode >> 4) & 3) {
+    const dest: GBContext.Register16 = switch ((opcode >> 4) & 3) {
         0 => .BC,
         1 => .DE,
         2 => .HL,
@@ -610,15 +601,15 @@ fn ld16imm(self: *GBContext, opcode: u8) void {
         else => unreachable,
     };
     const register = GBContext.Register{ .bytes = .{
-        .l = self.read_pc8_inc(),
-        .h = self.read_pc8_inc(),
+        .l = self.read8_at_pc_inc(),
+        .h = self.read8_at_pc_inc(),
     } };
 
     self.set_register16(dest, register);
 }
 
 fn st8ind(self: *GBContext, opcode: u8) void {
-    const addr_reg: GBContext.Register16Name = switch ((opcode >> 4) & 3) {
+    const addr_reg: GBContext.Register16 = switch ((opcode >> 4) & 3) {
         0 => .BC,
         1 => .DE,
         2 => .HL_INC,
@@ -632,7 +623,7 @@ fn st8ind(self: *GBContext, opcode: u8) void {
 }
 
 fn ld8ind(self: *GBContext, opcode: u8) void {
-    const addr_reg: GBContext.Register16Name = switch ((opcode >> 4) & 3) {
+    const addr_reg: GBContext.Register16 = switch ((opcode >> 4) & 3) {
         0 => .BC,
         1 => .DE,
         2 => .HL_INC,
@@ -645,7 +636,7 @@ fn ld8ind(self: *GBContext, opcode: u8) void {
 }
 
 fn ld8imm(self: *GBContext, opcode: u8) void {
-    const dest: GBContext.Register8Name = switch ((opcode >> 3) & 7) {
+    const dest: GBContext.Register8 = switch ((opcode >> 3) & 7) {
         0 => .B,
         1 => .C,
         2 => .D,
@@ -656,12 +647,12 @@ fn ld8imm(self: *GBContext, opcode: u8) void {
         7 => .A,
         else => unreachable,
     };
-    const value = self.read_pc8_inc();
+    const value = self.read8_at_pc_inc();
     self.set_register8(dest, value);
 }
 
 fn pop(self: *GBContext, opcode: u8) void {
-    const destination: GBContext.Register16Name = switch ((opcode >> 4) & 3) {
+    const destination: GBContext.Register16 = switch ((opcode >> 4) & 3) {
         0 => .BC,
         1 => .DE,
         2 => .HL,
@@ -673,7 +664,7 @@ fn pop(self: *GBContext, opcode: u8) void {
 }
 
 fn inc16(self: *GBContext, opcode: u8) void {
-    const reg: GBContext.Register16Name = switch ((opcode >> 4) & 3) {
+    const reg: GBContext.Register16 = switch ((opcode >> 4) & 3) {
         0 => .BC,
         1 => .DE,
         2 => .HL,
@@ -688,11 +679,11 @@ fn inc16(self: *GBContext, opcode: u8) void {
         register.dec();
     }
     self.set_register16(reg, register);
-    self.clock();
+    self.tick();
 }
 
 fn add_hl(self: *GBContext, opcode: u8) void {
-    const reg: GBContext.Register16Name = switch ((opcode >> 4) & 3) {
+    const reg: GBContext.Register16 = switch ((opcode >> 4) & 3) {
         0 => .BC,
         1 => .DE,
         2 => .HL,
@@ -709,11 +700,11 @@ fn add_hl(self: *GBContext, opcode: u8) void {
 
     self.set_flags(.{ .n = false, .c = result[1] == 1, .h = ((a.read() & 0x0FFF) + (b.read() & 0x0FFF)) > 0x0FFF });
 
-    self.clock();
+    self.tick();
 }
 
 fn inc8(self: *GBContext, opcode: u8) void {
-    const reg: GBContext.Register8Name = switch ((opcode >> 3) & 7) {
+    const reg: GBContext.Register8 = switch ((opcode >> 3) & 7) {
         0 => .B,
         1 => .C,
         2 => .D,
@@ -740,7 +731,7 @@ fn inc8(self: *GBContext, opcode: u8) void {
 }
 
 fn push(self: *GBContext, opcode: u8) void {
-    const destination: GBContext.Register16Name = switch ((opcode >> 4) & 3) {
+    const destination: GBContext.Register16 = switch ((opcode >> 4) & 3) {
         0 => .BC,
         1 => .DE,
         2 => .HL,
@@ -748,11 +739,11 @@ fn push(self: *GBContext, opcode: u8) void {
         else => unreachable,
     };
     self.push16(self.get_register16(destination));
-    self.clock();
+    self.tick();
 }
 
 fn mv_hl_sp_adj(self: *GBContext, _: u8) void {
-    const offset: i8 = @bitCast(self.read_pc8_inc());
+    const offset: i8 = @bitCast(self.read8_at_pc_inc());
     const sp: i16 = @bitCast(self.sp.read());
     const hl = sp +% offset;
 
@@ -768,11 +759,11 @@ fn mv_hl_sp_adj(self: *GBContext, _: u8) void {
         .h = (check_sp & 0x0F) + (check_off & 0x0F) > 0x0F,
     });
 
-    self.clock();
+    self.tick();
 }
 
 fn add_sp_imm(self: *GBContext, _: u8) void {
-    const offset: i8 = @bitCast(self.read_pc8_inc());
+    const offset: i8 = @bitCast(self.read8_at_pc_inc());
     const sp: i16 = @bitCast(self.sp.read());
     const new_sp = sp +% offset;
 
@@ -788,17 +779,17 @@ fn add_sp_imm(self: *GBContext, _: u8) void {
         .h = (check_sp & 0x0F) + (check_off & 0x0F) > 0x0F,
     });
 
-    self.clock();
-    self.clock();
+    self.tick();
+    self.tick();
 }
 
 fn mv_hl_sp(self: *GBContext, _: u8) void {
     self.sp = self.hl;
-    self.clock();
+    self.tick();
 }
 
 fn mv(self: *GBContext, opcode: u8) void {
-    const origin: GBContext.Register8Name = switch (opcode & 7) {
+    const origin: GBContext.Register8 = switch (opcode & 7) {
         0 => .B,
         1 => .C,
         2 => .D,
@@ -809,7 +800,7 @@ fn mv(self: *GBContext, opcode: u8) void {
         7 => .A,
         else => unreachable,
     };
-    const dest: GBContext.Register8Name = switch ((opcode >> 3) & 7) {
+    const dest: GBContext.Register8 = switch ((opcode >> 3) & 7) {
         0 => .B,
         1 => .C,
         2 => .D,
@@ -825,7 +816,7 @@ fn mv(self: *GBContext, opcode: u8) void {
 }
 
 fn alu(self: *GBContext, opcode: u8) void {
-    const operand: GBContext.Register8Name = switch (opcode & 7) {
+    const operand: GBContext.Register8 = switch (opcode & 7) {
         0 => .B,
         1 => .C,
         2 => .D,
@@ -850,7 +841,7 @@ fn alu(self: *GBContext, opcode: u8) void {
 }
 
 fn alu_imm(self: *GBContext, opcode: u8) void {
-    self.internal = self.read_pc8_inc();
+    self.internal = self.read8_at_pc_inc();
 
     switch (@as(u3, @truncate(opcode >> 3))) {
         0 => add(self, .internal),
@@ -894,7 +885,7 @@ fn rlca(self: *GBContext, _: u8) void {
     });
 }
 
-fn add(self: *GBContext, operand: GBContext.Register8Name) void {
+fn add(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(.A);
     const b = self.get_register8(operand);
 
@@ -910,7 +901,7 @@ fn add(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn adc(self: *GBContext, operand: GBContext.Register8Name) void {
+fn adc(self: *GBContext, operand: GBContext.Register8) void {
     const a: u16 = self.get_register8(.A);
     const b: u16 = self.get_register8(operand);
 
@@ -927,7 +918,7 @@ fn adc(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn sub(self: *GBContext, operand: GBContext.Register8Name) void {
+fn sub(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(.A);
     const b = self.get_register8(operand);
 
@@ -941,7 +932,7 @@ fn sub(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn sbc(self: *GBContext, operand: GBContext.Register8Name) void {
+fn sbc(self: *GBContext, operand: GBContext.Register8) void {
     const a: u16 = self.get_register8(.A);
     const b: u16 = self.get_register8(operand);
 
@@ -958,7 +949,7 @@ fn sbc(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn _and(self: *GBContext, operand: GBContext.Register8Name) void {
+fn _and(self: *GBContext, operand: GBContext.Register8) void {
     var a = self.get_register8(.A);
     const b = self.get_register8(operand);
 
@@ -974,7 +965,7 @@ fn _and(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn xor(self: *GBContext, operand: GBContext.Register8Name) void {
+fn xor(self: *GBContext, operand: GBContext.Register8) void {
     var a = self.get_register8(.A);
     const b = self.get_register8(operand);
 
@@ -990,7 +981,7 @@ fn xor(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn _or(self: *GBContext, operand: GBContext.Register8Name) void {
+fn _or(self: *GBContext, operand: GBContext.Register8) void {
     var a = self.get_register8(.A);
     const b = self.get_register8(operand);
 
@@ -1006,7 +997,7 @@ fn _or(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn cp(self: *GBContext, operand: GBContext.Register8Name) void {
+fn cp(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(.A);
     const b = self.get_register8(operand);
 
@@ -1050,8 +1041,8 @@ fn rrca(self: *GBContext, _: u8) void {
 }
 
 fn wide(self: *GBContext, _: u8) void {
-    const opcode = self.read_pc8_inc();
-    const operand: GBContext.Register8Name = switch (opcode & 7) {
+    const opcode = self.read8_at_pc_inc();
+    const operand: GBContext.Register8 = switch (opcode & 7) {
         0 => .B,
         1 => .C,
         2 => .D,
@@ -1078,7 +1069,7 @@ fn wide(self: *GBContext, _: u8) void {
     }
 }
 
-fn rlc(self: *GBContext, operand: GBContext.Register8Name) void {
+fn rlc(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(operand);
 
     const carry = (a >> 7) & 1;
@@ -1093,7 +1084,7 @@ fn rlc(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn rrc(self: *GBContext, operand: GBContext.Register8Name) void {
+fn rrc(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(operand);
 
     const carry = a & 1;
@@ -1108,7 +1099,7 @@ fn rrc(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn rl(self: *GBContext, operand: GBContext.Register8Name) void {
+fn rl(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(operand);
 
     const carry = (a >> 7) & 1;
@@ -1126,7 +1117,7 @@ fn rl(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn rr(self: *GBContext, operand: GBContext.Register8Name) void {
+fn rr(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(operand);
 
     const carry = a & 1;
@@ -1144,7 +1135,7 @@ fn rr(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn sla(self: *GBContext, operand: GBContext.Register8Name) void {
+fn sla(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(operand);
 
     const carry = (a >> 7) & 1;
@@ -1160,7 +1151,7 @@ fn sla(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn sra(self: *GBContext, operand: GBContext.Register8Name) void {
+fn sra(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(operand);
 
     const carry = a & 1;
@@ -1176,7 +1167,7 @@ fn sra(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn srl(self: *GBContext, operand: GBContext.Register8Name) void {
+fn srl(self: *GBContext, operand: GBContext.Register8) void {
     const a = self.get_register8(operand);
 
     const carry = a & 1;
@@ -1192,7 +1183,7 @@ fn srl(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn swap(self: *GBContext, operand: GBContext.Register8Name) void {
+fn swap(self: *GBContext, operand: GBContext.Register8) void {
     const HalfByte = packed struct(u8) { l: u4 = 0, h: u4 = 0 };
 
     var value: HalfByte = @bitCast(self.get_register8(operand));
@@ -1212,7 +1203,7 @@ fn swap(self: *GBContext, operand: GBContext.Register8Name) void {
     });
 }
 
-fn bit(self: *GBContext, operand: GBContext.Register8Name, pos: u3) void {
+fn bit(self: *GBContext, operand: GBContext.Register8, pos: u3) void {
     const a = self.get_register8(operand);
     const mask = @as(u8, 1) << pos;
 
@@ -1223,14 +1214,14 @@ fn bit(self: *GBContext, operand: GBContext.Register8Name, pos: u3) void {
     });
 }
 
-fn res(self: *GBContext, operand: GBContext.Register8Name, pos: u3) void {
+fn res(self: *GBContext, operand: GBContext.Register8, pos: u3) void {
     const a = self.get_register8(operand);
     const mask = ~(@as(u8, 1) << pos);
 
     self.set_register8(operand, a & mask);
 }
 
-fn set(self: *GBContext, operand: GBContext.Register8Name, pos: u3) void {
+fn set(self: *GBContext, operand: GBContext.Register8, pos: u3) void {
     const a = self.get_register8(operand);
     const mask = @as(u8, 1) << pos;
 

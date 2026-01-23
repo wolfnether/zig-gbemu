@@ -1,20 +1,20 @@
-pub const Flags = if (@import("builtin").cpu.arch.endian() == .little) packed struct(u16) {
-    _: u4 = 0,
-    c: bool,
-    h: bool,
-    n: bool,
-    z: bool,
-    a: u8,
-} else packed struct(u16) {
-    a: u8,
-    _: u4 = 0,
-    c: bool,
-    h: bool,
-    n: bool,
-    z: bool,
-};
-
 pub const Register = extern union {
+    pub const Flags = if (@import("builtin").cpu.arch.endian() == .little) packed struct(u16) {
+        _: u4 = 0,
+        c: bool,
+        h: bool,
+        n: bool,
+        z: bool,
+        a: u8,
+    } else packed struct(u16) {
+        a: u8,
+        _: u4 = 0,
+        c: bool,
+        h: bool,
+        n: bool,
+        z: bool,
+    };
+
     value: u16,
     bytes: if (@import("builtin").cpu.arch.endian() == .little) packed struct(u16) {
         l: u8,

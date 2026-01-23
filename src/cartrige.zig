@@ -5,8 +5,8 @@ pub const Mapper = @import("cardride/mapper.zig");
 pub fn init_cartrige(allocator: std.mem.Allocator, mapper: *Mapper) !void {
     switch (mapper.rom[0x0147]) {
         0x00 => {},
-        0x01...0x03 => mapper.mapper_type = .MBC1,
-        0x19...0x1E => mapper.mapper_type = .MBC5,
+        0x01...0x03 => mapper.mapper = .{ .MBC1 = .{} },
+        0x19...0x1E => mapper.mapper = .{ .MBC5 = .{} },
         else => |i| std.debug.panic("uniplemented cartrige type 0x{X:0>2}", .{i}),
     }
 

@@ -7,41 +7,27 @@ const Mapper = @This();
 
 const Type = enum { NoMapper, MBC1, MBC5 };
 
-mapper_type: Type = .NoMapper,
 rom: []u8 = undefined,
 ram: []u8 = undefined,
+mapper: union(Type) {
+    NoMapper: void,
+    MBC1: MBC1,
+    MBC5: MBC5,
+} = .NoMapper,
 
-const MBC0RomAddress = packed struct(u32) {
-    _0: u14,
-    _1: u5,
-    _2: u2,
-    _: u11 = 0,
-};
-const MBC0RamAddress = packed struct(u16) {
-    _0: u13,
-    _1: u2,
-    _: u1 = 0,
-};
-const MBC5RomAddress = packed struct(u32) {
-    _0: u14,
-    _1: u8,
-    _2: bool,
-    _: u9 = 0,
-};
-
-pub inline fn read_bus(self: *Mapper, addr: usize) u8 {
-    return switch (self.mapper_type) {
+pub inline fn read_bus(self: *Mapper, addr: u16) u8 {
+    return switch (self.mapper) {
         .NoMapper => self.rom[addr],
-        .MBC1 => MBC1.read_bus(self.rom, self.ram, addr),
-        .MBC5 => MBC5.read_bus(self.rom, self.ram, addr),
+        .MBC1 => self.mapper.MBC1.read(self, addr),
+        .MBC5 => self.mapper.MBC5.read(self, addr),
     };
 }
 
 pub inline fn write_bus(self: *Mapper, addr: u16, value: u8) void {
     switch (self.mapper_type) {
         .NoMapper => {}, //No writing allowed
-        .MBC1 => MBC1.write_bus(self.rom, self.ram, addr, value),
-        .MBC5 => MBC5.write_bus(self.rom, self.ram, addr, value),
+        .MBC1 => self.MBC1.write(self.rom, self.ram, addr, value),
+        .MBC5 => self.MBC5.write(self.rom, self.ram, addr, value),
     }
 }
 
