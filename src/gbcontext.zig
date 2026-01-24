@@ -25,7 +25,7 @@ timer: @import("timer.zig") = .{},
 hdma: @import("hdma.zig") = .{},
 dma: @import("dma.zig") = .{},
 
-wram: [8][0x1000]u8 = undefined,
+wram: [8][0x1000]u8 = [_][0x1000]u8{[_]u8{0xAA} ** 0x1000} ** 8,
 hram: [0x80]u8 = undefined,
 
 pc: Register = .init(0),
@@ -41,6 +41,8 @@ stopped: bool = false,
 IME: bool = false,
 
 pub fn request_interrupt(self: *@This(), interrupt_type: InterruptType) void {
+    if (interrupt_type != .vblank) std.debug.print("request {}\n", .{interrupt_type});
+
     const bit: u3 = @intFromEnum(interrupt_type);
     self.io.interrupt_flag.write_bit(bit, true);
 }
@@ -71,39 +73,8 @@ pub fn step(self: *GbContext) void {
         return;
     }
 
-    const pc = self.pc.read();
-    const sp = self.sp.read();
+    //self.print_debug_info();
     const opcode = self.read8_at_pc_inc();
-
-    std.debug.print("{s} {X:0>4} {s} AF:{X:0>4} BC:{X:0>4} DE:{X:0>4} HL:{X:0>4} SP:{X:0>4} {s} IF:{b:0>5} IE:{b:0>5} [{s}{s}{s}{s}] PC[0..4]:[{X}] SP[0..4]:{X}\n", .{
-        if (self.io.boot_rom_mapped) "BRM" else if (self.io.legacy_mode) "DMG" else "CGB",
-        pc,
-        OPCODE_NAME[opcode],
-        self.af.read(),
-        self.bc.read(),
-        self.de.read(),
-        self.hl.read(),
-        self.sp.read(),
-        if (self.IME) "IME" else "IMD",
-        self.io.interrupt_flag.value,
-        self.io.interrupt_enable.value,
-        if (self.af.flags.z) "Z" else "-",
-        if (self.af.flags.n) "N" else "-",
-        if (self.af.flags.h) "H" else "-",
-        if (self.af.flags.c) "C" else "-",
-        [_]u8{
-            self.read_bus_internal(pc +% 0),
-            self.read_bus_internal(pc +% 1),
-            self.read_bus_internal(pc +% 2),
-            self.read_bus_internal(pc +% 3),
-        },
-        [_]u8{
-            self.read_bus_internal(sp +% 0),
-            self.read_bus_internal(sp +% 1),
-            self.read_bus_internal(sp +% 2),
-            self.read_bus_internal(sp +% 3),
-        },
-    });
 
     OPCODE[opcode](self, opcode);
 }
@@ -197,6 +168,7 @@ pub fn read_bus_internal(self: *GbContext, addr: u16) u8 {
         0xE000...0xFDFF => continue :swt addr - 0x2000,
         0xFE00...0xFE9F => self.ppu.oam[addr - 0xFE00],
         0xFF00...0xFF7F => self.io.read(self, addr),
+        0xFEA0...0xFEFF => 0xFF,
         0xFF80...0xFFFE => self.hram[addr - 0xFF80],
         0xFFFF => self.io.read(self, 0xFFFF),
         else => std.debug.panic("Unhandled address: 0x{x:0>4}", .{addr}),
@@ -213,16 +185,18 @@ pub fn write_bus_internal(self: *GbContext, addr: u16, value: u8) void {
     const wbank = self.io.wbank.value;
     const vbank = self.io.vbank.value;
 
-    switch (addr) {
+    swt: switch (addr) {
         0x0000...0x7FFF => self.mapper.write_bus(addr, value),
         0x8000...0x9FFF => self.ppu.vram[vbank][addr - 0x8000] = value,
-        0xC000...0xCFFF => self.wram[0][addr - 0xC000] = value,
-        0xD000...0xDFFF => self.wram[wbank][addr - 0xD000] = value,
+        0xA000...0xBFFF => self.mapper.write_bus(addr, value),
+        0xC000...0xCFFF => |a| self.wram[0][a - 0xC000] = value,
+        0xD000...0xDFFF => |a| self.wram[wbank][a - 0xD000] = value,
+        0xE000...0xFDFF => continue :swt addr - 0x2000,
         0xFE00...0xFE9F => self.ppu.oam[addr - 0xFE00] = value,
+        0xFEA0...0xFEFF => {},
         0xFF00...0xFF7F => self.io.write(self, addr, value),
         0xFF80...0xFFFE => self.hram[addr - 0xFF80] = value,
         0xFFFF => self.io.write(self, 0xffff, value),
-        else => std.debug.panic("Unhandled address: 0x{x:0>4}", .{addr}),
     }
 }
 
@@ -320,4 +294,40 @@ pub inline fn pop16(self: *GbContext) Register {
         .l = self.pop8(),
         .h = self.pop8(),
     } };
+}
+
+fn print_debug_info(self: *GbContext) void {
+    const pc = self.pc.read();
+    const sp = self.sp.read();
+    const opcode = self.read_bus_internal(pc);
+    std.debug.print("{s} {X:0>4} {s} AF:{X:0>4} BC:{X:0>4} DE:{X:0>4} HL:{X:0>4} SP:{X:0>4} {s} IF:{b:0>5} IE:{b:0>5} [{s}{s}{s}{s}] PC[0..4]:[{X}] SP[0..4]:{X} DIV:{X:0>4}\n", .{
+        if (self.io.boot_rom_mapped) "BRM" else if (self.io.legacy_mode) "DMG" else "CGB",
+        pc,
+        OPCODE_NAME[opcode],
+        self.af.read(),
+        self.bc.read(),
+        self.de.read(),
+        self.hl.read(),
+        self.sp.read(),
+        if (self.IME) "IME" else "IMD",
+        self.io.interrupt_flag.value,
+        self.io.interrupt_enable.value,
+        if (self.af.flags.z) "Z" else "-",
+        if (self.af.flags.n) "N" else "-",
+        if (self.af.flags.h) "H" else "-",
+        if (self.af.flags.c) "C" else "-",
+        [_]u8{
+            self.read_bus_internal(pc +% 0),
+            self.read_bus_internal(pc +% 1),
+            self.read_bus_internal(pc +% 2),
+            self.read_bus_internal(pc +% 3),
+        },
+        [_]u8{
+            self.read_bus_internal(sp +% 0),
+            self.read_bus_internal(sp +% 1),
+            self.read_bus_internal(sp +% 2),
+            self.read_bus_internal(sp +% 3),
+        },
+        self.timer.internal_DIV.value,
+    });
 }

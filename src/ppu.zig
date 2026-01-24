@@ -4,12 +4,13 @@ const rl = @import("raylib");
 
 const PpuStructure = @import("structure/ppu.zig");
 const GbContext = @import("gbcontext.zig");
+const Fetcher = @import("fetcher.zig");
 
 const Ppu = @This();
 
 const GbColor = packed struct(u16) { r: u5, g: u5, b: u5, _: u1 };
 
-fetcher: @import("fetcher.zig") = .{},
+fetcher: Fetcher = .{},
 
 framebuffer: [160 * 144]rl.Color = [_]rl.Color{.gold} ** (160 * 144),
 vram: [2][0x2000]u8 = undefined,
@@ -39,15 +40,45 @@ status: PpuStructure.Status = @bitCast(@as(u8, 0)),
 
 priority_mode: bool = false,
 
+stat_irq_line: bool = false,
+
 pub fn tick(self: *Ppu, context: *GbContext) void {
     if (!self.control.enable) return;
     const ppu_tick: u8 = if (context.io.speed.read_bit(7)) 2 else 4;
     for (0..ppu_tick) |_| {
-        const old_mode = self.status.ppu_mode;
+        self.status.lyc_eq_ly = self.ly == self.lyc;
+        const old_stat_irq = self.stat_irq_line;
+
         if (self.lx == 80 and self.status.ppu_mode == .OAM_SCAN) {
             self.oam_scan();
             self.status.ppu_mode = .DRAW;
-        } else if (self.lx == 456) {
+            self.fetcher.pixels_to_discard = self.scx & 0x7;
+        }
+
+        if (self.status.ppu_mode == .DRAW) {
+            self.fetcher.step(context);
+            self.draw_pixel();
+            if (self.render_x == 160) {
+                self.status.ppu_mode = .HBLANK;
+            }
+        }
+
+        const mode_irq = switch (self.status.ppu_mode) {
+            .HBLANK => self.status.mode_0_int,
+            .VBLANK => self.status.mode_1_int,
+            .OAM_SCAN => self.status.mode_2_int,
+            .DRAW => false,
+        };
+        const lyc_irq = self.status.lyc_int and self.status.lyc_eq_ly;
+        self.stat_irq_line = mode_irq or lyc_irq;
+
+        if (self.stat_irq_line and !old_stat_irq) {
+            context.request_interrupt(.stat);
+        }
+
+        self.lx += 1;
+
+        if (self.lx == 456) {
             self.lx = 0;
             self.ly += 1;
             self.render_x = 0;
@@ -64,31 +95,6 @@ pub fn tick(self: *Ppu, context: *GbContext) void {
                 self.status.ppu_mode = .OAM_SCAN;
             }
         }
-
-        if (self.status.ppu_mode == .DRAW) {
-            self.fetcher.step(context);
-            self.draw_pixel();
-            if (self.render_x == 160) {
-                self.status.ppu_mode = .HBLANK;
-            }
-        }
-
-        const old_ly_eq = self.status.lyc_eq_ly;
-        self.status.lyc_eq_ly = self.ly == self.lyc;
-
-        if (self.status.lyc_int and !old_ly_eq and self.status.lyc_eq_ly)
-            context.request_interrupt(.stat);
-
-        if (self.status.ppu_mode != old_mode) {
-            switch (self.status.ppu_mode) {
-                .HBLANK => if (self.status.mode_0_int) context.request_interrupt(.stat),
-                .VBLANK => if (self.status.mode_1_int) context.request_interrupt(.stat),
-                .OAM_SCAN => if (self.status.mode_2_int) context.request_interrupt(.stat),
-                .DRAW => {},
-            }
-        }
-
-        self.lx += 1;
     }
 }
 

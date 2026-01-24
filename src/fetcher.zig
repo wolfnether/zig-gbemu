@@ -66,6 +66,7 @@ const Fetcher = @This();
 queue: Queue = .{},
 
 x: u8 = 0,
+pixels_to_discard: u8 = 0,
 
 state: FetcherState = .GetTileId,
 internal_wait: bool = false,
@@ -86,11 +87,12 @@ pub fn step(self: *Fetcher, context: *GbContext) void {
     if (!self.window_triggered and
         context.ppu.control.window_enable and
         context.ppu.ly >= context.ppu.wy and
-        context.ppu.render_x >= (context.ppu.wx -% 7))
+        context.ppu.render_x >= context.ppu.wx -% 7)
     {
         self.window_triggered = true;
         self.state = .GetTileId;
         self.x = 0;
+        self.pixels_to_discard = 0;
         self.queue.reset();
     }
 
@@ -124,13 +126,14 @@ pub fn step(self: *Fetcher, context: *GbContext) void {
                     else
                         raw_color;
 
+                    const screen_x = context.ppu.render_x + @as(u8, @intCast(i));
                     self.queue.enqueue(.{
                         .{
                             .color = color,
                             .palette = self.tile_attrib.palette,
                             .priority = self.tile_attrib.priority,
                         },
-                        self.get_obj_pixel(context, self.x + i) orelse .{
+                        self.get_obj_pixel(context, screen_x) orelse .{
                             .color = 0,
                             .palette = 0,
                             .priority = false,
@@ -147,8 +150,10 @@ pub fn step(self: *Fetcher, context: *GbContext) void {
 
 pub fn reset(self: *Fetcher) void {
     self.state = .GetTileId;
+    self.internal_wait = false;
     self.x = 0;
     self.queue.reset();
+    self.pixels_to_discard = 0;
     if (self.window_triggered) {
         self.window_line_counter +%= 1;
     }
@@ -158,25 +163,25 @@ pub fn reset(self: *Fetcher) void {
 fn fetch_tile_id(self: *Fetcher, context: *GbContext) void {
     const is_window = self.window_triggered;
 
-    var tile_x: u8 = 0;
-    var tile_y: u8 = 0;
+    var tile_map_base: u16 = 0;
+    var tile_x: u16 = 0;
+    var tile_y: u16 = 0;
 
     if (is_window) {
-        tile_x = self.x / 8;
-        tile_y = self.window_line_counter / 8;
+        tile_map_base = if (context.ppu.control.window_tile_map) 0x1C00 else 0x1800;
+        tile_x = self.x;
+        tile_y = self.window_line_counter;
     } else {
-        tile_x = (self.x +% context.ppu.scx) / 8;
-        tile_y = ((context.ppu.ly +% context.ppu.scy) / 8);
+        tile_map_base = if (context.ppu.control.bg_tile_map) 0x1C00 else 0x1800;
+        tile_x = self.x +% context.ppu.scx;
+        tile_y = context.ppu.ly +% context.ppu.scy;
     }
 
-    const tile_map_select = if (is_window)
-        context.ppu.control.window_tile_map
-    else
-        context.ppu.control.bg_tile_map;
+    tile_x /= 8;
+    tile_y /= 8;
+    tile_y *= 32;
 
-    const tile_map_base: u16 = if (tile_map_select) 0x1C00 else 0x1800;
-
-    const tile_map_addr = tile_map_base + (@as(u16, tile_y) * 32) + tile_x;
+    const tile_map_addr = tile_map_base + tile_y + tile_x;
 
     self.tile_id = context.ppu.vram[0][tile_map_addr];
 
@@ -209,24 +214,29 @@ fn fetch_tile(self: *Fetcher, context: *GbContext, offset: u8) u8 {
     return vram_bank[tile_data_addr + offset];
 }
 
-pub fn get_next_pixel(self: *Fetcher) ?struct { Pixel, Pixel } {
+pub fn get_next_pixel(self: *Fetcher) ?PixelPair {
+    while (self.pixels_to_discard > 0) {
+        if (self.queue.dequeue() != null) {
+            self.pixels_to_discard -= 1;
+        } else {
+            return null;
+        }
+    }
     return self.queue.dequeue();
 }
 
-pub fn get_obj_pixel(self: *Fetcher, context: *GbContext, offset: usize) ?Pixel {
+pub fn get_obj_pixel(self: *Fetcher, context: *GbContext, screen_x: u8) ?Pixel {
     if (!context.ppu.control.obj_enable) return null;
-    const is_window = self.window_triggered;
 
-    const wx: usize = @intCast(context.ppu.wx);
-    const x: isize = if (is_window) @bitCast((wx -% 7) +% offset) else @bitCast(offset);
+    const x: i16 = @intCast(screen_x);
 
     for (0..self.visible_sprite_count) |i| {
+        //discard pixel
         const sprite = self.visible_sprites[i];
         const sprite_x = @as(i16, sprite.x) - 8;
-        const current_x = @as(i16, @truncate(x));
 
-        if (current_x >= sprite_x and current_x < sprite_x + 8) {
-            var col = @as(u8, @intCast(current_x - sprite_x));
+        if (x >= sprite_x and x < sprite_x + 8) {
+            var col = @as(u8, @intCast(x - sprite_x));
             var row = @as(u8, @intCast(@as(i16, context.ppu.ly) - (@as(i16, sprite.y) - 16)));
 
             if (sprite.flip_x()) col = 7 - col;

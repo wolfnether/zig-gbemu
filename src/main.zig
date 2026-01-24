@@ -82,6 +82,14 @@ pub fn main() !void {
             .white,
         );
 
+        //for (1..144) |i| {
+        //    rl.drawLine(0, @intCast(i * 4), 160 * 4, @intCast(i * 4), .gray);
+        //}
+        //
+        //for (1..160) |i| {
+        //    rl.drawLine(@intCast(i * 4), 0, @intCast(i * 4), 144 * 4, .gray);
+        //}
+
         rl.endDrawing();
 
         var skip_next_frame = false;
@@ -107,7 +115,7 @@ pub fn main() !void {
                 }
             }
 
-            if (context.read_bus(context.pc.read()) == 0x40) {
+            if (context.read_bus_internal(context.pc.read()) == 0x40) {
                 while (true) {
                     rl.pollInputEvents();
                     if (rl.windowShouldClose()) return;
