@@ -45,6 +45,7 @@ pub fn tick(self: *Ppu, context: *GbContext) void {
     for (0..ppu_tick) |_| {
         const old_mode = self.status.ppu_mode;
         if (self.lx == 80 and self.status.ppu_mode == .OAM_SCAN) {
+            self.oam_scan();
             self.status.ppu_mode = .DRAW;
         } else if (self.lx == 456) {
             self.lx = 0;
@@ -58,6 +59,7 @@ pub fn tick(self: *Ppu, context: *GbContext) void {
             } else if (self.ly == 144) {
                 self.status.ppu_mode = .VBLANK;
                 context.request_interrupt(.vblank);
+                self.fetcher.window_line_counter = 0;
             } else if (self.ly < 144) {
                 self.status.ppu_mode = .OAM_SCAN;
             }
@@ -137,4 +139,48 @@ fn draw_pixel(self: *Ppu) void {
 
         self.render_x += 1;
     }
+}
+
+fn oam_scan(self: *Ppu) void {
+    self.fetcher.visible_sprite_count = 0;
+
+    const sprite_height: u8 = if (self.control.obj_size) 16 else 8;
+    const current_line: i16 = @intCast(self.ly);
+
+    // Parcourir les 40 sprites dans l'OAM
+    var i: u8 = 0;
+    while (i < 40) : (i += 1) {
+        if (self.fetcher.visible_sprite_count >= 10) break;
+
+        const oam_offset: usize = @as(usize, i) * 4;
+        const y = self.oam[oam_offset];
+        const x = self.oam[oam_offset + 1];
+        const tile_id = self.oam[oam_offset + 2];
+        const flags = self.oam[oam_offset + 3];
+
+        const sprite_y: i16 = @intCast(y);
+        const sprite_top = sprite_y - 16;
+        const sprite_bottom = sprite_top + @as(i16, sprite_height);
+
+        // Vérifier si le sprite est visible sur cette ligne
+        if (current_line >= sprite_top and current_line < sprite_bottom) {
+            self.fetcher.visible_sprites[self.fetcher.visible_sprite_count] = .{
+                .y = y,
+                .x = x,
+                .tile_id = tile_id,
+                .flags = flags,
+                .idx = i,
+            };
+            self.fetcher.visible_sprite_count += 1;
+        }
+    }
+
+    // Trier les sprites par priorité
+    if (self.priority_mode) {
+        std.mem.sort(PpuStructure.Object, self.fetcher.visible_sprites[0..self.fetcher.visible_sprite_count], {}, sprite_compare);
+    }
+}
+
+fn sprite_compare(_: void, a: PpuStructure.Object, b: PpuStructure.Object) bool {
+    return if (a.x == b.x) a.idx < b.idx else a.x < b.x;
 }

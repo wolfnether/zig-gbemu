@@ -78,7 +78,22 @@ tile_l: u8 = undefined,
 visible_sprite_count: u8 = 0,
 visible_sprites: [10]Object = undefined,
 
+window_triggered: bool = false,
+window_line_counter: u8 = 0,
+
 pub fn step(self: *Fetcher, context: *GbContext) void {
+    // Check if window should trigger at this pixel
+    if (!self.window_triggered and
+        context.ppu.control.window_enable and
+        context.ppu.ly >= context.ppu.wy and
+        context.ppu.render_x >= (context.ppu.wx -% 7))
+    {
+        self.window_triggered = true;
+        self.state = .GetTileId;
+        self.x = 0;
+        self.queue.reset();
+    }
+
     if (!self.internal_wait) {
         switch (self.state) {
             .GetTileId => {
@@ -134,19 +149,21 @@ pub fn reset(self: *Fetcher) void {
     self.state = .GetTileId;
     self.x = 0;
     self.queue.reset();
+    if (self.window_triggered) {
+        self.window_line_counter +%= 1;
+    }
+    self.window_triggered = false;
 }
 
 fn fetch_tile_id(self: *Fetcher, context: *GbContext) void {
-    const is_window = context.ppu.control.window_enable and
-        context.ppu.ly >= context.ppu.wy and
-        self.x >= (context.ppu.wx -% 7);
+    const is_window = self.window_triggered;
 
     var tile_x: u8 = 0;
     var tile_y: u8 = 0;
 
     if (is_window) {
-        tile_x = (self.x -% (context.ppu.wx -% 7)) / 8;
-        tile_y = (context.ppu.ly -% context.ppu.wy) / 8;
+        tile_x = self.x / 8;
+        tile_y = self.window_line_counter / 8;
     } else {
         tile_x = (self.x +% context.ppu.scx) / 8;
         tile_y = ((context.ppu.ly +% context.ppu.scy) / 8);
@@ -168,12 +185,10 @@ fn fetch_tile_id(self: *Fetcher, context: *GbContext) void {
 }
 
 fn fetch_tile(self: *Fetcher, context: *GbContext, offset: u8) u8 {
-    const is_window = context.ppu.control.window_enable and
-        context.ppu.ly >= context.ppu.wy and
-        self.x >= (context.ppu.wx -% 7);
+    const is_window = self.window_triggered;
 
     var y: u8 = if (is_window)
-        (context.ppu.ly -% context.ppu.wy) % 8
+        self.window_line_counter % 8
     else
         (context.ppu.ly +% context.ppu.scy) % 8;
 
@@ -200,8 +215,10 @@ pub fn get_next_pixel(self: *Fetcher) ?struct { Pixel, Pixel } {
 
 pub fn get_obj_pixel(self: *Fetcher, context: *GbContext, offset: usize) ?Pixel {
     if (!context.ppu.control.obj_enable) return null;
+    const is_window = self.window_triggered;
 
-    const x: isize = @intCast(offset);
+    const wx: usize = @intCast(context.ppu.wx);
+    const x: isize = if (is_window) @bitCast((wx -% 7) +% offset) else @bitCast(offset);
 
     for (0..self.visible_sprite_count) |i| {
         const sprite = self.visible_sprites[i];
