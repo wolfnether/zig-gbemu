@@ -116,6 +116,9 @@ pub fn main() !void {
             }
 
             if (context.read_bus_internal(context.pc.read()) == 0x40) {
+                rl.beginDrawing();
+                rl.drawText("Breakpoint", 0, 0, 32, .gray);
+                rl.endDrawing();
                 while (true) {
                     rl.pollInputEvents();
                     if (rl.windowShouldClose()) return;

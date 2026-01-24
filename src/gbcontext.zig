@@ -92,9 +92,9 @@ fn check_interrupts(self: *@This()) void {
     const IF = self.io.interrupt_flag.read_bits(0, 5);
     const pending = IE & IF;
 
-    self.halted &= IE == 0;
-
     if (pending == 0) return;
+
+    self.halted &= IE == 0;
 
     if (!self.IME) return;
 

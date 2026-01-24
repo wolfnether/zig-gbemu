@@ -346,14 +346,13 @@ fn hlt(self: *GBContext, _: u8) void {
 fn stop(self: *GBContext, _: u8) void {
     self.timer.set_DIV(self, 0);
 
-    @panic("rewrite");
-
-    //const armed = self.speed & 1;
-    //if (armed == 1) {
-    //    self.speed ^= 0x81;
-    //} else {
-    //    self.is_stopped = true;
-    //}
+    if (self.io.speed.read_bit(1)) {
+        self.io.speed.write_bit(1, false);
+        const speed = self.io.speed.read_bit(7);
+        self.io.speed.write_bit(7, !speed);
+    } else {
+        self.stopped = true;
+    }
 }
 
 fn di(self: *GBContext, _: u8) void {
