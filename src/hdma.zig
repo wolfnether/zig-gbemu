@@ -14,12 +14,12 @@ hblank_transfered: bool = false,
 
 internal: u8 = 0,
 
-pub fn set_statue(self: *@This(), status: Status) void {
+pub fn set_status(self: *@This(), status: Status) void {
     self.status = status;
     self.started = true;
 
     self.src.value &= 0xFFF0;
-    self.src.value = (self.src.value & 0x1FF0) | 0x8000;
+    self.dst.value = (self.dst.value & 0x1FF0) | 0x8000;
     self.internal = 0x10;
 }
 

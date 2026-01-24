@@ -24,10 +24,10 @@ pub inline fn read_bus(self: *Mapper, addr: u16) u8 {
 }
 
 pub inline fn write_bus(self: *Mapper, addr: u16, value: u8) void {
-    switch (self.mapper_type) {
+    switch (self.mapper) {
         .NoMapper => {}, //No writing allowed
-        .MBC1 => self.MBC1.write(self.rom, self.ram, addr, value),
-        .MBC5 => self.MBC5.write(self.rom, self.ram, addr, value),
+        .MBC1 => self.mapper.MBC1.write(self, addr, value),
+        .MBC5 => self.mapper.MBC5.write(self, addr, value),
     }
 }
 

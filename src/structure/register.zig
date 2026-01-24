@@ -45,4 +45,7 @@ pub const Register = extern union {
     pub inline fn init(value: u16) @This() {
         return .{ .value = value };
     }
+    pub inline fn from_bytes(high: u8, low: u8) @This() {
+        return .{ .bytes = .{ .h = high, .l = low } };
+    }
 };

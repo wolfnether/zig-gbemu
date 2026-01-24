@@ -8,7 +8,7 @@ const OPCODE_NAME = @import("opcode.zig").OPCODE_NAME;
 
 const GbContext = @This();
 
-const InterruptType = enum(u3) { vblank = 0, lcd = 1, timer = 2, serial = 3, joypad = 4 };
+const InterruptType = enum(u3) { vblank = 0, stat = 1, timer = 2, serial = 3, joypad = 4 };
 
 pub const Register8 = enum { A, B, C, D, E, H, L, HL_IND, internal };
 pub const Register16 = enum { AF, BC, DE, HL, SP, HL_INC, HL_DEC };
@@ -23,6 +23,7 @@ ppu: @import("ppu.zig") = .{},
 io: @import("io.zig") = .{},
 timer: @import("timer.zig") = .{},
 hdma: @import("hdma.zig") = .{},
+dma: @import("dma.zig") = .{},
 
 wram: [8][0x1000]u8 = undefined,
 hram: [0x80]u8 = undefined,
@@ -56,13 +57,16 @@ pub fn deinit(self: *GbContext) void {
 }
 
 pub fn step(self: *GbContext) void {
-    if (self.halted) {
-        std.debug.print("Halted\n", .{});
+    if (self.hdma.started and !self.hdma.status.hblank) {
+        std.debug.print("Halted cause by GDMA\n", .{});
         self.tick();
         return;
     }
-    if (self.hdma.started and !self.hdma.status.hblank) {
-        std.debug.print("Halted cause by GDMA\n", .{});
+
+    self.check_interrupts();
+
+    if (self.halted) {
+        std.debug.print("Halted\n", .{});
         self.tick();
         return;
     }
@@ -108,7 +112,50 @@ pub fn tick(self: *GbContext) void {
     self.ticks += 1;
     self.timer.tick(self);
     self.ppu.tick(self);
+    self.dma.tick(self);
     if (!self.halted) self.hdma.tick(self);
+}
+
+fn check_interrupts(self: *@This()) void {
+    const IE = self.io.interrupt_enable.read_bits(0, 5);
+    const IF = self.io.interrupt_flag.read_bits(0, 5);
+    const pending = IE & IF;
+
+    self.halted &= IE == 0;
+
+    if (pending == 0) return;
+
+    if (!self.IME) return;
+
+    self.IME = false;
+
+    self.service_interrupt();
+}
+
+fn service_interrupt(self: *@This()) void {
+    self.tick();
+    self.tick();
+
+    const IE = self.io.interrupt_enable.read_bits(0, 5);
+    const IF = self.io.interrupt_flag.read_bits(0, 5);
+
+    const pending = IE & IF;
+    const bit: u3 = @truncate(@ctz(pending));
+
+    self.push8(self.pc.bytes.h);
+
+    if (bit != 0)
+        std.debug.print("serviing interrupt {}\n", .{bit});
+
+    if (self.io.interrupt_enable.read_bits(0, 5) & self.io.interrupt_flag.read_bits(0, 5) == 0) {
+        self.pc.value = 0;
+        self.tick();
+    } else {
+        self.io.interrupt_flag.write_bit(bit, false);
+        self.push8(self.pc.bytes.l);
+        self.pc.value = 0x0040 + (@as(u16, bit) * 8);
+    }
+    self.tick();
 }
 
 pub inline fn read8_at_pc_inc(self: *GbContext) u8 {
@@ -142,14 +189,16 @@ pub fn read_bus_internal(self: *GbContext, addr: u16) u8 {
     const wbank = self.io.wbank.value;
     const vbank = self.io.vbank.value;
 
-    return switch (addr) {
+    return swt: switch (addr) {
         0x0000...0x7FFF => self.mapper.read_bus(addr),
-        0xC000...0xCFFF => self.wram[0][addr - 0xC000],
-        0xD000...0xDFFF => self.wram[wbank][addr - 0xD000],
         0x8000...0x9FFF => self.ppu.vram[vbank][addr - 0x8000],
-        0xFF00...0xFF7F => self.io.read(addr),
+        0xC000...0xCFFF => |a| self.wram[0][a - 0xC000],
+        0xD000...0xDFFF => |a| self.wram[wbank][a - 0xD000],
+        0xE000...0xFDFF => continue :swt addr - 0x2000,
+        0xFE00...0xFE9F => self.ppu.oam[addr - 0xFE00],
+        0xFF00...0xFF7F => self.io.read(self, addr),
         0xFF80...0xFFFE => self.hram[addr - 0xFF80],
-        0xFFFF => self.io.read(0xFFFF),
+        0xFFFF => self.io.read(self, 0xFFFF),
         else => std.debug.panic("Unhandled address: 0x{x:0>4}", .{addr}),
     };
 }
@@ -165,13 +214,15 @@ pub fn write_bus_internal(self: *GbContext, addr: u16, value: u8) void {
     const vbank = self.io.vbank.value;
 
     switch (addr) {
+        0x0000...0x7FFF => self.mapper.write_bus(addr, value),
         0x8000...0x9FFF => self.ppu.vram[vbank][addr - 0x8000] = value,
+        0xC000...0xCFFF => self.wram[0][addr - 0xC000] = value,
         0xD000...0xDFFF => self.wram[wbank][addr - 0xD000] = value,
         0xFE00...0xFE9F => self.ppu.oam[addr - 0xFE00] = value,
         0xFF00...0xFF7F => self.io.write(self, addr, value),
         0xFF80...0xFFFE => self.hram[addr - 0xFF80] = value,
         0xFFFF => self.io.write(self, 0xffff, value),
-        else => std.debug.panic("Unhandled address: {x}", .{addr}),
+        else => std.debug.panic("Unhandled address: 0x{x:0>4}", .{addr}),
     }
 }
 

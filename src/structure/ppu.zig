@@ -25,3 +25,42 @@ pub const Status = packed struct(u8) {
     lyc_int: bool,
     _: bool, //always 1
 };
+
+pub const Palette = packed struct(u8) {
+    p0: u2,
+    p1: u2,
+    p2: u2,
+    p3: u2,
+};
+
+pub const Object = packed struct {
+    y: u8,
+    x: u8,
+    tile_id: u8,
+    flags: u8,
+    idx: u8,
+
+    pub fn get_palette(self: @This()) u3 {
+        return @truncate(self.flags & 0x07);
+    }
+
+    pub fn get_bank(self: @This()) u1 {
+        return @truncate((self.flags >> 3) & 0x01);
+    }
+
+    pub fn flip_x(self: @This()) bool {
+        return (self.flags & 0x20) != 0;
+    }
+
+    pub fn flip_y(self: @This()) bool {
+        return (self.flags & 0x40) != 0;
+    }
+
+    pub fn priority(self: @This()) bool {
+        return (self.flags & 0x80) != 0;
+    }
+
+    pub fn dmg_palette(self: @This()) u1 {
+        return @truncate((self.flags >> 4) & 0x01);
+    }
+};
