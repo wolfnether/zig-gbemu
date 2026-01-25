@@ -80,13 +80,14 @@ visible_sprite_count: u8 = 0,
 visible_sprites: [10]Object = undefined,
 
 window_triggered: bool = false,
+window_activated: bool = false,
 window_line_counter: u8 = 0,
 
 pub fn step(self: *Fetcher, context: *GbContext) void {
     // Check if window should trigger at this pixel
     if (!self.window_triggered and
+        self.window_activated and
         context.ppu.control.window_enable and
-        context.ppu.ly >= context.ppu.wy and
         context.ppu.render_x >= context.ppu.wx -% 7)
     {
         self.window_triggered = true;

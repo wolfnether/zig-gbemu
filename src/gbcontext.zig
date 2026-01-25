@@ -39,13 +39,11 @@ internal: u8 = 0,
 halted: bool = false,
 stopped: bool = false,
 IME: bool = false,
+IME_flipped: u2 = 0,
 
-pub fn request_interrupt(self: *@This(), interrupt_type: InterruptType) void {
-    if (interrupt_type != .vblank) std.debug.print("request {}\n", .{interrupt_type});
-
-    const bit: u3 = @intFromEnum(interrupt_type);
-    self.io.interrupt_flag.write_bit(bit, true);
-}
+last_opcode: u8 = 0,
+halt_bug: bool = false,
+halt_ei_bug: bool = false,
 
 pub fn set_rom(self: *GbContext, rom: []u8) !void {
     self.mapper.rom = rom;
@@ -60,7 +58,6 @@ pub fn deinit(self: *GbContext) void {
 
 pub fn step(self: *GbContext) void {
     if (self.hdma.started and !self.hdma.status.hblank) {
-        std.debug.print("Halted cause by GDMA\n", .{});
         self.tick();
         return;
     }
@@ -68,18 +65,25 @@ pub fn step(self: *GbContext) void {
     self.check_interrupts();
 
     if (self.halted) {
-        std.debug.print("Halted\n", .{});
         self.tick();
         return;
     }
 
-    //self.print_debug_info();
+    self.print_debug_info();
     const opcode = self.read8_at_pc_inc();
 
     OPCODE[opcode](self, opcode);
+    self.last_opcode = opcode;
 }
 
 pub fn tick(self: *GbContext) void {
+    if (self.IME_flipped == 1) {
+        self.IME_flipped = 0;
+        self.IME = !self.IME;
+    } else if (self.IME_flipped > 1) {
+        self.IME_flipped -= 1;
+    }
+
     self.ticks += 1;
     self.timer.tick(self);
     self.ppu.tick(self);
@@ -87,14 +91,24 @@ pub fn tick(self: *GbContext) void {
     if (!self.halted) self.hdma.tick(self);
 }
 
-fn check_interrupts(self: *@This()) void {
+pub fn request_interrupt(self: *@This(), interrupt_type: InterruptType) void {
+    const bit: u3 = @intFromEnum(interrupt_type);
+    self.io.interrupt_flag.write_bit(bit, true);
+}
+
+pub fn get_interrupt_pending(self: *@This()) u5 {
     const IE = self.io.interrupt_enable.read_bits(0, 5);
     const IF = self.io.interrupt_flag.read_bits(0, 5);
-    const pending = IE & IF;
+
+    return @truncate(IE & IF);
+}
+
+fn check_interrupts(self: *@This()) void {
+    const pending = self.get_interrupt_pending();
 
     if (pending == 0) return;
 
-    self.halted &= IE == 0;
+    self.halted &= pending == 0;
 
     if (!self.IME) return;
 
@@ -106,6 +120,7 @@ fn check_interrupts(self: *@This()) void {
 fn service_interrupt(self: *@This()) void {
     self.tick();
     self.tick();
+    self.tick();
 
     const IE = self.io.interrupt_enable.read_bits(0, 5);
     const IF = self.io.interrupt_flag.read_bits(0, 5);
@@ -115,22 +130,27 @@ fn service_interrupt(self: *@This()) void {
 
     self.push8(self.pc.bytes.h);
 
-    if (bit != 0)
-        std.debug.print("serviing interrupt {}\n", .{bit});
-
     if (self.io.interrupt_enable.read_bits(0, 5) & self.io.interrupt_flag.read_bits(0, 5) == 0) {
         self.pc.value = 0;
         self.tick();
     } else {
         self.io.interrupt_flag.write_bit(bit, false);
-        self.push8(self.pc.bytes.l);
+        if (self.halt_ei_bug) {
+            self.push8(self.pc.bytes.l -% 1);
+            self.halt_ei_bug = false;
+        } else {
+            self.push8(self.pc.bytes.l);
+        }
         self.pc.value = 0x0040 + (@as(u16, bit) * 8);
     }
-    self.tick();
 }
 
 pub inline fn read8_at_pc_inc(self: *GbContext) u8 {
-    defer self.pc.inc();
+    defer if (self.halt_bug) {
+        self.halt_bug = false;
+    } else {
+        self.pc.inc();
+    };
 
     return self.read_bus(self.pc.value);
 }
@@ -163,19 +183,19 @@ pub fn read_bus_internal(self: *GbContext, addr: u16) u8 {
     return swt: switch (addr) {
         0x0000...0x7FFF => self.mapper.read_bus(addr),
         0x8000...0x9FFF => self.ppu.vram[vbank][addr - 0x8000],
+        0xA000...0xBFFF => self.mapper.read_bus(addr),
         0xC000...0xCFFF => |a| self.wram[0][a - 0xC000],
         0xD000...0xDFFF => |a| self.wram[wbank][a - 0xD000],
         0xE000...0xFDFF => continue :swt addr - 0x2000,
-        0xFE00...0xFE9F => self.ppu.oam[addr - 0xFE00],
+        0xFE00...0xFE9F => if (!self.dma.active) self.ppu.oam[addr - 0xFE00] else 0xff,
         0xFF00...0xFF7F => self.io.read(self, addr),
         0xFEA0...0xFEFF => 0xFF,
         0xFF80...0xFFFE => self.hram[addr - 0xFF80],
         0xFFFF => self.io.read(self, 0xFFFF),
-        else => std.debug.panic("Unhandled address: 0x{x:0>4}", .{addr}),
     };
 }
 
-pub fn write_bus_internal(self: *GbContext, addr: u16, value: u8) void {
+pub fn write_bus_internal(self: *GbContext, addr: u16, value: u8, is_dma: bool) void {
     if (self.io.boot_rom_mapped) {
         if (addr < 0x0100 or (addr < 0x0200 and addr <= 0x0900)) {
             return;
@@ -192,7 +212,9 @@ pub fn write_bus_internal(self: *GbContext, addr: u16, value: u8) void {
         0xC000...0xCFFF => |a| self.wram[0][a - 0xC000] = value,
         0xD000...0xDFFF => |a| self.wram[wbank][a - 0xD000] = value,
         0xE000...0xFDFF => continue :swt addr - 0x2000,
-        0xFE00...0xFE9F => self.ppu.oam[addr - 0xFE00] = value,
+        0xFE00...0xFE9F => if (!self.dma.active or is_dma) {
+            self.ppu.oam[addr - 0xFE00] = value;
+        },
         0xFEA0...0xFEFF => {},
         0xFF00...0xFF7F => self.io.write(self, addr, value),
         0xFF80...0xFFFE => self.hram[addr - 0xFF80] = value,
@@ -203,7 +225,7 @@ pub fn write_bus_internal(self: *GbContext, addr: u16, value: u8) void {
 pub fn write_bus(self: *GbContext, addr: u16, value: u8) void {
     self.tick();
 
-    self.write_bus_internal(addr, value);
+    self.write_bus_internal(addr, value, false);
 }
 
 pub fn get_register8(self: *GbContext, reg: Register8) u8 {

@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const MBC1 = @import("mbc1.zig");
-const MBC5 = @import("mbc1.zig");
+const MBC5 = @import("mbc5.zig");
 
 const Mapper = @This();
 
@@ -17,7 +17,7 @@ mapper: union(Type) {
 
 pub inline fn read_bus(self: *Mapper, addr: u16) u8 {
     return switch (self.mapper) {
-        .NoMapper => self.rom[addr],
+        .NoMapper => self.rom[addr % self.rom.len],
         .MBC1 => self.mapper.MBC1.read(self, addr),
         .MBC5 => self.mapper.MBC5.read(self, addr),
     };

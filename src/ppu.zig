@@ -42,6 +42,8 @@ priority_mode: bool = false,
 
 stat_irq_line: bool = false,
 
+skip_frame: bool = false,
+
 pub fn tick(self: *Ppu, context: *GbContext) void {
     if (!self.control.enable) return;
     const ppu_tick: u8 = if (context.io.speed.read_bit(7)) 2 else 4;
@@ -56,6 +58,9 @@ pub fn tick(self: *Ppu, context: *GbContext) void {
         }
 
         if (self.status.ppu_mode == .DRAW) {
+            if (!self.fetcher.window_activated and self.wy == self.ly) {
+                self.fetcher.window_activated = true;
+            }
             self.fetcher.step(context);
             self.draw_pixel();
             if (self.render_x == 160) {
@@ -85,11 +90,16 @@ pub fn tick(self: *Ppu, context: *GbContext) void {
             self.fetcher.reset();
 
             if (self.ly == 154) {
+                self.fetcher.window_activated = false;
                 self.ly = 0;
                 self.status.ppu_mode = .OAM_SCAN;
             } else if (self.ly == 144) {
                 self.status.ppu_mode = .VBLANK;
-                context.request_interrupt(.vblank);
+                if (self.skip_frame) {
+                    self.skip_frame = false;
+                } else {
+                    context.request_interrupt(.vblank);
+                }
                 self.fetcher.window_line_counter = 0;
             } else if (self.ly < 144) {
                 self.status.ppu_mode = .OAM_SCAN;
@@ -118,9 +128,10 @@ fn draw_pixel(self: *Ppu) void {
         const object = pixels[1];
 
         const bg_disabled = !self.control.bg_enable;
-        const no_priority = !object.priority and !background.priority;
+        const obj_enabled = self.control.obj_enable;
         const bg_transparent = background.color == 0;
-        const draw_object_pixel = self.control.obj_enable and object.color != 0 and (bg_disabled or no_priority or bg_transparent);
+        const no_priority = !object.priority and !background.priority;
+        const draw_object_pixel = obj_enabled and object.color != 0 and (bg_disabled or bg_transparent or no_priority);
 
         const pixel = if (draw_object_pixel) object else background;
 
@@ -140,7 +151,7 @@ fn draw_pixel(self: *Ppu) void {
             .r = (r << 3) | (r >> 2),
             .g = (g << 3) | (g >> 2),
             .b = (b << 3) | (b >> 2),
-            .a = 0xaa,
+            .a = 0xFE,
         };
 
         self.render_x += 1;

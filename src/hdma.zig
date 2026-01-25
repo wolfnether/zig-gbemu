@@ -28,11 +28,21 @@ pub fn tick(self: *@This(), context: *GbContext) void {
     if (self.status.hblank and context.ppu.status.ppu_mode != .HBLANK and self.hblank_transfered) {
         self.hblank_transfered = false;
     } else if (self.status.hblank and context.ppu.status.ppu_mode == .HBLANK and !self.hblank_transfered) {
-        @panic("Implement HDMA transfer logic");
+        self.hblank_transfered = true;
+        for (0..0x10) |_| {
+            const data = context.read_bus_internal(self.src.read());
+            context.write_bus_internal(self.dst.read(), data, false);
+            self.src.inc();
+            self.dst.inc();
+        }
+        self.status.len -%= 1;
+        if (self.status.len == 0b1111111) {
+            self.started = false;
+        }
     } else if (!self.status.hblank) {
         for (0..2) |_| {
             const data = context.read_bus_internal(self.src.read());
-            context.write_bus_internal(self.dst.read(), data);
+            context.write_bus_internal(self.dst.read(), data, false);
             self.src.inc();
             self.dst.inc();
             self.internal -= 1;

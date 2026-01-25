@@ -334,13 +334,29 @@ pub const OPCODE: [0x100]*const fn (self: *GBContext, opcode: u8) void = blk: {
 };
 
 fn todo(_: *GBContext, opcode: u8) void {
-    std.debug.panic("Instruction 0x{X:0>2} not implemented yet", .{opcode});
+    if (@import("builtin").mode == .Debug)
+        std.debug.panic("Instruction 0x{X:0>2} not implemented yet", .{opcode})
+    else
+        std.debug.print("Instruction 0x{X:0>2} not implemented yet\n", .{opcode});
 }
 
 fn nop(_: *GBContext, _: u8) void {}
 
 fn hlt(self: *GBContext, _: u8) void {
-    self.halted = true;
+    if (!self.IME and self.get_interrupt_pending() != 0) {
+        const next_opcode = self.read_bus_internal(self.pc.read() +% 1);
+        const next_is_rst = (next_opcode & 0b11000111) == 0b11000111;
+
+        if (self.last_opcode == 0xFB and next_is_rst) {
+            @panic("Interrupts are pending; do rst bug");
+        } else if (self.last_opcode == 0xFB) {
+            self.halt_ei_bug = true;
+        } else {
+            self.halt_bug = true;
+        }
+    } else {
+        self.halted = true;
+    }
 }
 
 fn stop(self: *GBContext, _: u8) void {
@@ -356,11 +372,13 @@ fn stop(self: *GBContext, _: u8) void {
 }
 
 fn di(self: *GBContext, _: u8) void {
-    self.IME = false;
+    if (self.IME)
+        self.IME_flipped = 2;
 }
 
 fn ei(self: *GBContext, _: u8) void {
-    self.IME = true;
+    if (!self.IME)
+        self.IME_flipped = 2;
 }
 
 fn cpl(self: *GBContext, _: u8) void {
@@ -380,9 +398,9 @@ fn scf(self: *GBContext, _: u8) void {
 }
 
 fn rst(self: *GBContext, opcode: u8) void {
+    self.tick();
     self.push16(self.pc);
     self.pc.write(opcode & 0x38);
-    self.tick();
 }
 
 fn daa(self: *GBContext, _: u8) void {
@@ -737,8 +755,8 @@ fn push(self: *GBContext, opcode: u8) void {
         3 => .AF,
         else => unreachable,
     };
-    self.push16(self.get_register16(destination));
     self.tick();
+    self.push16(self.get_register16(destination));
 }
 
 fn mv_hl_sp_adj(self: *GBContext, _: u8) void {
