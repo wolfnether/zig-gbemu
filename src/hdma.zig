@@ -1,8 +1,10 @@
 const GbContext = @import("gbcontext.zig");
 
+// FF55: bits 0-6 = longueur (blocs de 16 octets - 1), bit 7 = mode (0=GDMA, 1=HBLANK).
+// En lecture: bit 7 = 0 si transfert actif, 1 si terminé/inactif.
 const Status = packed struct(u8) {
-    hblank: bool,
     len: u7,
+    hblank: bool,
 };
 
 src: GbContext.Register = undefined,
@@ -15,12 +17,23 @@ hblank_transfered: bool = false,
 internal: u8 = 0,
 
 pub fn set_status(self: *@This(), status: Status) void {
+    // Écriture mode GDMA (bit7=0) pendant un transfert HBLANK actif = abort.
+    if (!status.hblank and self.started and self.status.hblank) {
+        self.started = false;
+        return;
+    }
     self.status = status;
     self.started = true;
 
     self.src.value &= 0xFFF0;
     self.dst.value = (self.dst.value & 0x1FF0) | 0x8000;
     self.internal = 0x10;
+}
+
+/// Lecture FF55: bit7=0 en cours, 1 si fini/inactif; bits0-6 = blocs restants - 1.
+pub fn read_status(self: *const @This()) u8 {
+    if (!self.started) return 0xFF;
+    return @as(u8, @bitCast(self.status)) & 0x7F;
 }
 
 pub fn tick(self: *@This(), context: *GbContext) void {

@@ -3,7 +3,10 @@ mgbdis/
 src copy/
 test/
 zig-out/
+zig-pkg/
 cgb_boot.bin
 *.gb
+*.gbc
 *.sav
+*.rtc
 out.txt

@@ -34,6 +34,7 @@ pub fn read(self: *@This(), mapper: *Mapper, addr: u16) u8 {
         },
         0xA000...0xBFFF => {
             if (!self.ram_enabled) return 0xFF;
+            if (mapper.ram.len == 0) return 0xFF;
             const address = RamAddress{
                 ._0 = @truncate(addr),
                 ._1 = self.ram_bank,
@@ -55,6 +56,7 @@ pub fn write(self: *@This(), mapper: *Mapper, addr: u16, value: u8) void {
         0x6000...0x9FFF => {},
         0xA000...0xBFFF => {
             if (!self.ram_enabled) return;
+            if (mapper.ram.len == 0) return;
             const address = RamAddress{
                 ._0 = @truncate(addr),
                 ._1 = self.ram_bank,
@@ -62,6 +64,7 @@ pub fn write(self: *@This(), mapper: *Mapper, addr: u16, value: u8) void {
             const comp_addr: u32 = @bitCast(address);
             const mod_addr = comp_addr % mapper.ram.len;
             mapper.ram[mod_addr] = value;
+            mapper.dirty = true;
         },
         else => std.debug.panic("Unhandled address: 0x{x:0>4}", .{addr}),
     }

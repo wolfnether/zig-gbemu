@@ -114,13 +114,15 @@ pub fn tick(self: *Ppu, context: *GbContext) void {
 }
 
 pub fn write_object_palette(self: *Ppu, index: u8, value: u8) void {
-    if (self.status.ppu_mode == .DRAW) return;
+    // NOTE: sur HW la palette RAM CGB est accessible en permanence,
+    // seuls VRAM/OAM sont bloqués en DRAW/OAM_SCAN. Pas de guard ici,
+    // sinon le write est droppé mais l'auto-incrément BCPS/OCPS passe quand même.
     const palette: []u8 = @ptrCast(&self.object_palette);
     palette[index] = value;
 }
 
 pub fn write_background_palette(self: *Ppu, index: u8, value: u8) void {
-    if (self.status.ppu_mode == .DRAW) return;
+    // Idem ci-dessus.
     const palette: []u8 = @ptrCast(&self.background_palette);
     palette[index] = value;
 }

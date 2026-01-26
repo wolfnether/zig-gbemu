@@ -47,6 +47,7 @@ pub fn read(self: *@This(), mapper: *Mapper, addr: u16) u8 {
         },
         0xA000...0xBFFF => {
             if (!self.ram_enabled) return 0xff;
+            if (mapper.ram.len == 0) return 0xff;
             const address = RamAddress{
                 ._0 = @truncate(addr),
                 ._1 = if (self.mode) self.bank2 else 0,
@@ -75,6 +76,7 @@ pub fn write(self: *@This(), mapper: *Mapper, addr: u16, value: u8) void {
             if (mapper.ram.len != 0) {
                 const mod_addr = comp_addr % mapper.ram.len;
                 mapper.ram[mod_addr] = value;
+                mapper.dirty = true;
             }
         },
         else => std.debug.panic("Unhandled address: 0x{x:0>4}", .{addr}),

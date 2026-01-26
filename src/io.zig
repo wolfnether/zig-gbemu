@@ -32,7 +32,7 @@ void_reg: IoRegister = .init(false, 0, 0, 0),
 legacy_mode: bool = false,
 
 nr10: IoRegister = .init(false, 0x7f, 0x7f, 0x80),
-nr11: IoRegister = .init(false, 0xff, 0b11000000, 0xBF),
+nr11: IoRegister = .init(false, 0xff, 0xff, 0xBF),
 nr12: IoRegister = .init(false, 0xff, 0xff, 0xF3),
 nr13: IoRegister = .init(false, 0, 0xff, 0xFF),
 nr14: IoRegister = .init(false, 0b11000000, 0b11000111, 0xBF),
@@ -113,7 +113,7 @@ pub fn read(self: *@This(), context: *GBContext, addr: u16) u8 {
         0xFF4F => self.vbank.read(self.legacy_mode),
         0xFF50 => 0xFF,
         0xFF51...0xFF54 => 0xFF,
-        0xFF55 => if (!self.legacy_mode) context.hdma.status.len else 0xff,
+        0xFF55 => if (!self.legacy_mode) context.hdma.read_status() else 0xff,
         0xFF56...0xFF67 => 0xFF,
         0xFF68 => self.bcps.read(self.legacy_mode),
         0xFF69 => if (self.legacy_mode) 0xff else @panic("0xFF69 !legacy_mode not implemented"),
@@ -152,36 +152,45 @@ pub fn write(self: *@This(), context: *GBContext, addr: u16, value: u8) void {
         0xFF12 => self.nr12.write(self.legacy_mode, value),
         0xFF13 => {
             self.nr13.write(self.legacy_mode, value);
-            context.apu.period_ch1 &= 0b11100000000;
-            context.apu.period_ch1 |= value;
+            context.apu.set_ch1_period_low(value);
         },
         0xFF14 => {
             self.nr14.write(self.legacy_mode, value);
-            self.nr52.write_bit(0, self.nr14.read_bit(7));
-            context.apu.period_ch1 &= 0xff;
-            context.apu.period_ch1 |= @as(u11, self.nr14.read_bits(0, 2)) << 8;
+            context.apu.set_ch1_period_high(@truncate(self.nr14.read_bits(0, 2)));
+            if (self.nr14.read_bit(7)) {
+                self.nr52.write_bit(0, true);
+                context.apu.trigger_ch1(context);
+            }
         },
         0xFF15 => {},
         0xFF16 => self.nr21.write(self.legacy_mode, value),
         0xFF17 => self.nr22.write(self.legacy_mode, value),
         0xFF18 => {
             self.nr23.write(self.legacy_mode, value);
-            context.apu.period_ch2 &= 0b11100000000;
-            context.apu.period_ch2 |= value;
+            context.apu.set_ch2_period_low(value);
         },
         0xFF19 => {
             self.nr24.write(self.legacy_mode, value);
-            self.nr52.write_bit(1, self.nr24.read_bit(7));
-            context.apu.period_ch2 &= 0xff;
-            context.apu.period_ch2 |= @as(u11, self.nr24.read_bits(0, 2)) << 8;
+            context.apu.set_ch2_period_high(@truncate(self.nr24.read_bits(0, 2)));
+            if (self.nr24.read_bit(7)) {
+                self.nr52.write_bit(1, true);
+                context.apu.trigger_ch2(context);
+            }
         },
         0xFF1A => self.nr30.write(self.legacy_mode, value),
         0xFF1B => self.nr31.write(self.legacy_mode, value),
         0xFF1C => self.nr32.write(self.legacy_mode, value),
-        0xFF1D => self.nr33.write(self.legacy_mode, value),
+        0xFF1D => {
+            self.nr33.write(self.legacy_mode, value);
+            context.apu.set_ch3_period_low(value);
+        },
         0xFF1E => {
             self.nr34.write(self.legacy_mode, value);
-            self.nr52.write_bit(2, self.nr14.read_bit(7));
+            context.apu.set_ch3_period_high(@truncate(self.nr34.read_bits(0, 2)));
+            if (self.nr34.read_bit(7)) {
+                self.nr52.write_bit(2, true);
+                context.apu.trigger_ch3(context);
+            }
         },
         0xFF1F => {},
         0xFF20 => self.nr41.write(self.legacy_mode, value),
@@ -189,7 +198,10 @@ pub fn write(self: *@This(), context: *GBContext, addr: u16, value: u8) void {
         0xFF22 => self.nr43.write(self.legacy_mode, value),
         0xFF23 => {
             self.nr44.write(self.legacy_mode, value);
-            self.nr52.write_bit(3, self.nr14.read_bit(7));
+            if (self.nr44.read_bit(7)) {
+                self.nr52.write_bit(3, true);
+                context.apu.trigger_ch4(context);
+            }
         },
         0xFF24 => self.nr50.write(self.legacy_mode, value),
         0xFF25 => self.nr51.write(self.legacy_mode, value),
@@ -198,7 +210,7 @@ pub fn write(self: *@This(), context: *GBContext, addr: u16, value: u8) void {
             self.nr52.write_bits(0, 3, 0);
             if (self.nr52.read_bit(7)) {
                 self.nr10.write_mask = 0x7f;
-                self.nr11.write_mask = 0b11000000;
+                self.nr11.write_mask = 0xff;
                 self.nr12.write_mask = 0xff;
                 self.nr13.write_mask = 0xff;
                 self.nr14.write_mask = 0b11000111;
@@ -329,10 +341,7 @@ pub fn write(self: *@This(), context: *GBContext, addr: u16, value: u8) void {
         0xFF6A => self.ocps.write(self.legacy_mode, value),
         0xFF6B => {
             const index = self.ocps.read_bits(0, 5);
-            if (self.boot_rom_mapped)
-                context.ppu.write_object_palette(index -% 1, value)
-            else
-                context.ppu.write_object_palette(index, value);
+            context.ppu.write_object_palette(index, value);
             if (self.ocps.read_bit(7)) {
                 self.ocps.write_bits(0, 5, index +% 1);
             }

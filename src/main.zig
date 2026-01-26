@@ -7,6 +7,7 @@ const argsParser = @import("args");
 
 const CYCLES_PER_FRAME = 70224;
 const SECONDE_PER_CYCLE = 0.0000002384;
+const FRAME_SECONDS: f64 = 16_742_706.0 / 1_000_000_000.0; // ~59.73 Hz
 
 const OPCODE_NAME = @import("opcode.zig").OPCODE_NAME;
 const OPCODE_LEN = @import("opcode.zig").OPCODE_LEN;
@@ -54,11 +55,8 @@ fn feed_the_beast(ptr: ?*anyopaque, frames: c_uint) callconv(.c) void {
     audio_queue.fill_buffer(cast, frames);
 }
 
-pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-
-    const allocator = arena.allocator();
+pub fn main(init: std.process.Init) !void {
+    const allocator = init.gpa;
 
     const options = try argsParser.parseForCurrentProcess(struct {
         file: ?[]const u8 = null,
@@ -76,10 +74,10 @@ pub fn main() !void {
             .F = "no-sleep",
             .D = "debug-print",
         };
-    }, allocator, .print);
+    }, init, .print);
     defer options.deinit();
 
-    const boot_rom = try std.fs.cwd().readFileAlloc(allocator, "cgb_boot.bin", std.math.maxInt(usize));
+    const boot_rom = try std.Io.Dir.cwd().readFileAlloc(init.io, "cgb_boot.bin", allocator, .unlimited);
     defer allocator.free(boot_rom);
 
     if (options.options.file == null) {
@@ -87,7 +85,7 @@ pub fn main() !void {
         return;
     }
 
-    const rom = try std.fs.cwd().readFileAlloc(allocator, options.options.file.?, std.math.maxInt(usize));
+    const rom = try std.Io.Dir.cwd().readFileAlloc(init.io, options.options.file.?, allocator, .unlimited);
     defer allocator.free(rom);
 
     var context = GBContext{
@@ -97,6 +95,19 @@ pub fn main() !void {
     };
     try context.set_rom(rom);
     defer context.deinit();
+    context.mapper.host_io = init.io;
+
+    // Save: <rom>.sav à côté de la ROM (format brut, compatible autres émus).
+    const save_path = try save_path_for_rom(allocator, options.options.file.?);
+    defer allocator.free(save_path);
+    load_save(init.io, save_path, &context);
+    defer flush_save(init.io, save_path, &context);
+
+    // RTC MBC3: <rom>.rtc séparé (le .sav reste brut et compatible).
+    const rtc_path = try rtc_path_for_rom(allocator, options.options.file.?);
+    defer allocator.free(rtc_path);
+    load_rtc(init.io, rtc_path, &context);
+    defer flush_rtc(init.io, rtc_path, &context);
 
     context.init_bios();
 
@@ -135,7 +146,7 @@ pub fn main() !void {
 
     rl.playAudioStream(audio_stream);
 
-    var next_frame_time = std.time.nanoTimestamp();
+    var next_frame_time: f64 = rl.getTime();
 
     while (true) {
         var cycles_this_frame: u64 = 0;
@@ -229,16 +240,98 @@ pub fn main() !void {
         //    break;
         //}
 
-        next_frame_time += 16_742_706;
-        const now = std.time.nanoTimestamp();
-        const sleep_time_ns = next_frame_time - now;
+        next_frame_time += FRAME_SECONDS;
+        const now = rl.getTime();
+        const sleep_s = next_frame_time - now;
 
-        if (sleep_time_ns > 0) {
-            std.Thread.sleep(@intCast(sleep_time_ns));
-        } else if (sleep_time_ns < -16_742_706 * 5) {
+        if (sleep_s > 0 and !options.options.@"no-sleep") {
+            rl.waitTime(sleep_s);
+        } else if (sleep_s < -FRAME_SECONDS * 5) {
             next_frame_time = now;
         }
+
+        // Flush la save en continu (perte max = 1 frame en cas de crash).
+        if (context.mapper.dirty) flush_save(init.io, save_path, &context);
+        if (context.mapper.rtc_dirty) flush_rtc(init.io, rtc_path, &context);
     }
+}
+
+/// Chemin d'un fichier annexe : même nom que la ROM, extension donnée.
+fn path_with_ext(allocator: std.mem.Allocator, rom_path: []const u8, ext: []const u8) ![]u8 {
+    const dot = std.mem.lastIndexOfScalar(u8, rom_path, '.');
+    const base = if (dot) |i| rom_path[0..i] else rom_path;
+    return std.fmt.allocPrint(allocator, "{s}.{s}", .{ base, ext });
+}
+
+/// Chemin de la save : même nom que la ROM, extension .sav.
+pub fn save_path_for_rom(allocator: std.mem.Allocator, rom_path: []const u8) ![]u8 {
+    return path_with_ext(allocator, rom_path, "sav");
+}
+
+/// Chemin de la RTC : même nom que la ROM, extension .rtc.
+pub fn rtc_path_for_rom(allocator: std.mem.Allocator, rom_path: []const u8) ![]u8 {
+    return path_with_ext(allocator, rom_path, "rtc");
+}
+
+/// Charge le .sav dans la SRAM (si battery + taille exacte), sinon SRAM à 0xFF.
+pub fn load_save(io: std.Io, save_path: []const u8, context: *GBContext) void {
+    if (!context.mapper.has_battery or context.mapper.ram.len == 0) return;
+    const data = std.Io.Dir.cwd().readFileAlloc(io, save_path, context.allocator, .unlimited) catch |err| {
+        if (err != error.FileNotFound) std.log.warn("save: lecture {s} impossible: {}", .{ save_path, err });
+        return;
+    };
+    defer context.allocator.free(data);
+    if (data.len != context.mapper.ram.len) {
+        std.log.warn("save: taille inattendue {s} ({} != {}), ignorée", .{ save_path, data.len, context.mapper.ram.len });
+        return;
+    }
+    @memcpy(context.mapper.ram, data);
+    std.log.info("save: {s} chargée ({} octets)", .{ save_path, data.len });
+}
+
+/// Écrit la SRAM dans le .sav si dirty (puis clear). Jamais de crash sur erreur FS.
+pub fn flush_save(io: std.Io, save_path: []const u8, context: *GBContext) void {
+    if (!context.mapper.has_battery or context.mapper.ram.len == 0) return;
+    if (!context.mapper.dirty) return;
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = save_path, .data = context.mapper.ram }) catch |err| {
+        std.log.warn("save: écriture {s} impossible: {}", .{ save_path, err });
+        return;
+    };
+    context.mapper.dirty = false;
+}
+
+/// Charge le .rtc (MBC3 uniquement). Ignoré si absent/invalide.
+pub fn load_rtc(io: std.Io, rtc_path: []const u8, context: *GBContext) void {
+    const mbc3 = switch (context.mapper.mapper) {
+        .MBC3 => |*m| m,
+        else => return,
+    };
+    const data = std.Io.Dir.cwd().readFileAlloc(io, rtc_path, context.allocator, .unlimited) catch |err| {
+        if (err != error.FileNotFound) std.log.warn("rtc: lecture {s} impossible: {}", .{ rtc_path, err });
+        return;
+    };
+    defer context.allocator.free(data);
+    if (!mbc3.rtc_deserialize(data)) {
+        std.log.warn("rtc: {s} invalide, ignoré", .{rtc_path});
+        return;
+    }
+    context.mapper.rtc_dirty = false;
+    std.log.info("rtc: {s} chargée", .{rtc_path});
+}
+
+/// Écrit l'état RTC dans le .rtc si modifié (puis clear).
+pub fn flush_rtc(io: std.Io, rtc_path: []const u8, context: *GBContext) void {
+    const mbc3 = switch (context.mapper.mapper) {
+        .MBC3 => |*m| m,
+        else => return,
+    };
+    if (!context.mapper.rtc_dirty) return;
+    const blob = mbc3.rtc_serialize();
+    std.Io.Dir.cwd().writeFile(io, .{ .sub_path = rtc_path, .data = &blob }) catch |err| {
+        std.log.warn("rtc: écriture {s} impossible: {}", .{ rtc_path, err });
+        return;
+    };
+    context.mapper.rtc_dirty = false;
 }
 
 fn check_key(context: *GBContext) void {
