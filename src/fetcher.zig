@@ -84,7 +84,6 @@ window_activated: bool = false,
 window_line_counter: u8 = 0,
 
 pub fn step(self: *Fetcher, context: *GbContext) void {
-    // Check if window should trigger at this pixel
     if (!self.window_triggered and
         self.window_activated and
         context.ppu.control.window_enable and
