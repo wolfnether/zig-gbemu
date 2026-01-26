@@ -8,6 +8,7 @@ const Pixel = struct {
     color: u2,
     palette: u8,
     priority: bool,
+    raw_color: u2,
 };
 
 const Attributes = packed struct(u8) {
@@ -23,7 +24,6 @@ const FetcherState = enum {
     GetTileId,
     GetTileLow,
     GetTileHigh,
-    Sleep,
     Push,
 };
 
@@ -109,9 +109,8 @@ pub fn step(self: *Fetcher, context: *GbContext) void {
             },
             .GetTileHigh => {
                 self.tile_h = self.fetch_tile(context, 1);
-                self.state = .Sleep;
+                self.state = .Push;
             },
-            .Sleep => self.state = .Push,
             .Push => {
                 if (self.queue.len() > 8) return;
 
@@ -131,11 +130,13 @@ pub fn step(self: *Fetcher, context: *GbContext) void {
                     self.queue.enqueue(.{
                         .{
                             .color = color,
+                            .raw_color = raw_color,
                             .palette = self.tile_attrib.palette,
                             .priority = self.tile_attrib.priority,
                         },
                         self.get_obj_pixel(context, screen_x) orelse .{
                             .color = 0,
+                            .raw_color = 0,
                             .palette = 0,
                             .priority = false,
                         },
@@ -232,7 +233,6 @@ pub fn get_obj_pixel(self: *Fetcher, context: *GbContext, screen_x: u8) ?Pixel {
     const x: i16 = @intCast(screen_x);
 
     for (0..self.visible_sprite_count) |i| {
-        //discard pixel
         const sprite = self.visible_sprites[i];
         const sprite_x = @as(i16, sprite.x) - 8;
 
@@ -266,22 +266,23 @@ pub fn get_obj_pixel(self: *Fetcher, context: *GbContext, screen_x: u8) ?Pixel {
             const bit_low = (low_byte >> bit_index) & 1;
             const bit_high = (high_byte >> bit_index) & 1;
 
-            const color_val: u2 = @truncate((bit_high << 1) | bit_low);
+            const raw_color: u2 = @truncate((bit_high << 1) | bit_low);
 
-            if (color_val == 0) continue;
+            if (raw_color == 0) continue;
 
             const color = if (context.io.legacy_mode) blk: {
                 const dmg_palette = if (sprite.dmg_palette() == 0)
                     context.ppu.obp0
                 else
                     context.ppu.obp1;
-                break :blk get_legacy_color(color_val, dmg_palette);
-            } else color_val;
+                break :blk get_legacy_color(raw_color, dmg_palette);
+            } else raw_color;
 
             const palette = if (!context.io.legacy_mode) sprite.get_palette() else 0;
 
             return Pixel{
                 .color = color,
+                .raw_color = raw_color,
                 .palette = palette,
                 .priority = sprite.priority(),
             };

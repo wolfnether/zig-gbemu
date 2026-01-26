@@ -60,7 +60,7 @@ pub fn read(self: *@This(), context: *GBContext, addr: u16) u8 {
             var result: u4 = 0xF;
             if (sel & 1 == 0) result &= self.dpad;
             if (sel & 2 == 0) result &= self.button;
-            return result | (sel << 4) | 0b11000000;
+            return (sel << 4) | result;
         },
         0xFF02 => self.unused.read(self.legacy_mode),
         0xFF03 => 0xFF,

@@ -69,7 +69,7 @@ pub fn step(self: *GbContext) void {
         return;
     }
 
-    self.print_debug_info();
+    //self.print_debug_info();
     const opcode = self.read8_at_pc_inc();
 
     OPCODE[opcode](self, opcode);
@@ -122,15 +122,15 @@ fn service_interrupt(self: *@This()) void {
     self.tick();
     self.tick();
 
+    self.push8(self.pc.bytes.h);
+
     const IE = self.io.interrupt_enable.read_bits(0, 5);
     const IF = self.io.interrupt_flag.read_bits(0, 5);
 
     const pending = IE & IF;
     const bit: u3 = @truncate(@ctz(pending));
 
-    self.push8(self.pc.bytes.h);
-
-    if (self.io.interrupt_enable.read_bits(0, 5) & self.io.interrupt_flag.read_bits(0, 5) == 0) {
+    if (pending == 0) {
         self.pc.value = 0;
         self.tick();
     } else {

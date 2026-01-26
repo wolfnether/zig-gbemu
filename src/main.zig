@@ -20,12 +20,14 @@ pub fn main() !void {
     const options = try argsParser.parseForCurrentProcess(struct {
         file: ?[]const u8 = null,
         step: bool = false,
+        breakpoint: bool = false,
         @"skip-rom-step": bool = false,
 
         pub const shorthands = .{
             .s = "step",
             .f = "file",
             .S = "skip-rom-step",
+            .b = "breakpoint",
         };
     }, allocator, .print);
     defer options.deinit();
@@ -115,7 +117,7 @@ pub fn main() !void {
                 }
             }
 
-            if (context.read_bus_internal(context.pc.read()) == 0x40) {
+            if (context.read_bus_internal(context.pc.read()) == 0x40 and options.options.breakpoint) {
                 rl.beginDrawing();
                 rl.drawText("Breakpoint", 0, 0, 32, .gray);
                 rl.endDrawing();

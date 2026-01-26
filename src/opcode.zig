@@ -372,13 +372,13 @@ fn stop(self: *GBContext, _: u8) void {
 }
 
 fn di(self: *GBContext, _: u8) void {
-    if (self.IME)
-        self.IME_flipped = 2;
+    self.IME_flipped = 0;
+    self.IME = false;
 }
 
 fn ei(self: *GBContext, _: u8) void {
     if (!self.IME)
-        self.IME_flipped = 2;
+        self.IME_flipped = 1;
 }
 
 fn cpl(self: *GBContext, _: u8) void {
@@ -562,20 +562,20 @@ fn call_cond(self: *GBContext, opcode: u8) void {
     };
 
     if (condition) {
+        self.tick();
         self.push16(self.pc);
         self.pc = new_pc;
-        self.tick();
     }
 }
 
 fn call(self: *GBContext, _: u8) void {
     const register = self.read16_at_pc_inc();
 
+    self.tick();
+
     self.push16(self.pc);
 
     self.pc = register;
-
-    self.tick();
 }
 
 fn ret_cond(self: *GBContext, opcode: u8) void {

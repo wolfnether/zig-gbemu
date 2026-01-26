@@ -54,17 +54,18 @@ pub fn tick(self: *Ppu, context: *GbContext) void {
         if (self.lx == 80 and self.status.ppu_mode == .OAM_SCAN) {
             self.oam_scan();
             self.status.ppu_mode = .DRAW;
-            self.fetcher.pixels_to_discard = self.scx & 0x7;
+            self.fetcher.pixels_to_discard = self.scx % 8;
         }
 
         if (self.status.ppu_mode == .DRAW) {
             if (!self.fetcher.window_activated and self.wy == self.ly) {
                 self.fetcher.window_activated = true;
             }
-            self.fetcher.step(context);
+            if (self.lx > 86) self.fetcher.step(context);
             self.draw_pixel();
             if (self.render_x == 160) {
                 self.status.ppu_mode = .HBLANK;
+                //std.debug.print(">{} - {} - {} <\n", .{ self.ly, self.scx, self.lx - 80 });
             }
         }
 
@@ -129,9 +130,9 @@ fn draw_pixel(self: *Ppu) void {
 
         const bg_disabled = !self.control.bg_enable;
         const obj_enabled = self.control.obj_enable;
-        const bg_transparent = background.color == 0;
+        const bg_transparent = background.raw_color == 0;
         const no_priority = !object.priority and !background.priority;
-        const draw_object_pixel = obj_enabled and object.color != 0 and (bg_disabled or bg_transparent or no_priority);
+        const draw_object_pixel = obj_enabled and object.raw_color != 0 and (bg_disabled or bg_transparent or no_priority);
 
         const pixel = if (draw_object_pixel) object else background;
 
