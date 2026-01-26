@@ -30,7 +30,7 @@ pub fn tick(self: *@This(), context: *GbContext) void {
     } else if (self.status.hblank and context.ppu.status.ppu_mode == .HBLANK and !self.hblank_transfered) {
         self.hblank_transfered = true;
         for (0..0x10) |_| {
-            const data = context.read_bus_internal(self.src.read());
+            const data = context.read_bus_internal(self.src.read(), false);
             context.write_bus_internal(self.dst.read(), data, false);
             self.src.inc();
             self.dst.inc();
@@ -41,7 +41,7 @@ pub fn tick(self: *@This(), context: *GbContext) void {
         }
     } else if (!self.status.hblank) {
         for (0..2) |_| {
-            const data = context.read_bus_internal(self.src.read());
+            const data = context.read_bus_internal(self.src.read(), false);
             context.write_bus_internal(self.dst.read(), data, false);
             self.src.inc();
             self.dst.inc();

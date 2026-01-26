@@ -167,10 +167,10 @@ pub inline fn read16_at_pc_inc(self: *GbContext) Register {
 pub fn read_bus(self: *GbContext, addr: u16) u8 {
     self.tick();
 
-    return self.read_bus_internal(addr);
+    return self.read_bus_internal(addr, false);
 }
 
-pub fn read_bus_internal(self: *GbContext, addr: u16) u8 {
+pub fn read_bus_internal(self: *GbContext, addr: u16, is_oam: bool) u8 {
     if (self.io.boot_rom_mapped) {
         if (addr < 0x0100 or (0x0200 <= addr and addr < 0x0900)) {
             return self.boot_rom[addr];
@@ -179,15 +179,19 @@ pub fn read_bus_internal(self: *GbContext, addr: u16) u8 {
 
     const wbank = self.io.wbank.value;
     const vbank = self.io.vbank.value;
+    const ppu_mode = self.ppu.status.ppu_mode;
+    const vram_lock = ppu_mode == .DRAW;
+    const oam_lock = self.dma.active or ppu_mode == .DRAW or ppu_mode == .OAM_SCAN;
+    const is_oam_unlock = !self.dma.active and is_oam;
 
     return swt: switch (addr) {
         0x0000...0x7FFF => self.mapper.read_bus(addr),
-        0x8000...0x9FFF => self.ppu.vram[vbank][addr - 0x8000],
+        0x8000...0x9FFF => if (!vram_lock) self.ppu.vram[vbank][addr - 0x8000] else 0xFF,
         0xA000...0xBFFF => self.mapper.read_bus(addr),
         0xC000...0xCFFF => |a| self.wram[0][a - 0xC000],
         0xD000...0xDFFF => |a| self.wram[wbank][a - 0xD000],
         0xE000...0xFDFF => continue :swt addr - 0x2000,
-        0xFE00...0xFE9F => if (!self.dma.active) self.ppu.oam[addr - 0xFE00] else 0xff,
+        0xFE00...0xFE9F => if (!oam_lock or is_oam_unlock) self.ppu.oam[addr - 0xFE00] else 0xff,
         0xFF00...0xFF7F => self.io.read(self, addr),
         0xFEA0...0xFEFF => 0xFF,
         0xFF80...0xFFFE => self.hram[addr - 0xFF80],

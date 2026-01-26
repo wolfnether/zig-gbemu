@@ -344,7 +344,7 @@ fn nop(_: *GBContext, _: u8) void {}
 
 fn hlt(self: *GBContext, _: u8) void {
     if (!self.IME and self.get_interrupt_pending() != 0) {
-        const next_opcode = self.read_bus_internal(self.pc.read() +% 1);
+        const next_opcode = self.read_bus_internal(self.pc.read() +% 1, false);
         const next_is_rst = (next_opcode & 0b11000111) == 0b11000111;
 
         if (self.last_opcode == 0xFB and next_is_rst) {

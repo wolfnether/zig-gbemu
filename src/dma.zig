@@ -35,7 +35,7 @@ pub fn tick(self: *@This(), context: *GbContext) void {
     const source_addr: GbContext.Register = .from_bytes(corrected_addr, self.bytes_transferred);
     const dest_addr: GbContext.Register = .from_bytes(0xFE, self.bytes_transferred);
 
-    const data = context.read_bus_internal(source_addr.read());
+    const data = context.read_bus_internal(source_addr.read(), false);
     context.write_bus_internal(dest_addr.read(), data, true);
 
     self.bytes_transferred += 1;

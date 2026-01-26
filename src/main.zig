@@ -117,7 +117,7 @@ pub fn main() !void {
                 }
             }
 
-            if (context.read_bus_internal(context.pc.read()) == 0x40 and options.options.breakpoint) {
+            if (context.read_bus_internal(context.pc.read(), false) == 0x40 and options.options.breakpoint) {
                 rl.beginDrawing();
                 rl.drawText("Breakpoint", 0, 0, 32, .gray);
                 rl.endDrawing();

@@ -174,10 +174,10 @@ fn oam_scan(self: *Ppu, context: *GbContext) void {
         if (self.fetcher.visible_sprite_count >= 10) break;
 
         const oam_offset: u16 = 0xFE00 + @as(u16, i) * 4;
-        const y = context.read_bus_internal(oam_offset);
-        const x = context.read_bus_internal(oam_offset + 1);
-        const tile_id = context.read_bus_internal(oam_offset + 2);
-        const flags = context.read_bus_internal(oam_offset + 3);
+        const y = context.read_bus_internal(oam_offset, true);
+        const x = context.read_bus_internal(oam_offset + 1, true);
+        const tile_id = context.read_bus_internal(oam_offset + 2, true);
+        const flags = context.read_bus_internal(oam_offset + 3, true);
 
         const sprite_y: i16 = @intCast(y);
         const sprite_top = sprite_y - 16;
