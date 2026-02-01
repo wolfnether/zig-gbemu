@@ -17,8 +17,11 @@ allocator: std.mem.Allocator,
 boot_rom: []u8,
 ticks: usize = 0,
 
+debug_print: bool = false,
+
 mapper: Cardrige.Mapper = .{},
 
+apu: @import("apu.zig") = .{},
 ppu: @import("ppu.zig") = .{},
 io: @import("io.zig") = .{},
 timer: @import("timer.zig") = .{},
@@ -69,7 +72,7 @@ pub fn step(self: *GbContext) void {
         return;
     }
 
-    //self.print_debug_info();
+    if (self.debug_print) self.print_debug_info();
     const opcode = self.read8_at_pc_inc();
 
     OPCODE[opcode](self, opcode);
@@ -87,6 +90,7 @@ pub fn tick(self: *GbContext) void {
     self.ticks += 1;
     self.timer.tick(self);
     self.ppu.tick(self);
+    self.apu.tick(self);
     self.dma.tick(self);
     if (!self.halted) self.hdma.tick(self);
 }
@@ -177,7 +181,7 @@ pub fn read_bus_internal(self: *GbContext, addr: u16, is_oam: bool) u8 {
         }
     }
 
-    const wbank = self.io.wbank.value;
+    const wbank = if (self.io.wbank.value != 0) self.io.wbank.value else 1;
     const vbank = self.io.vbank.value;
     const ppu_mode = self.ppu.status.ppu_mode;
     const vram_lock = ppu_mode == .DRAW;
@@ -206,7 +210,7 @@ pub fn write_bus_internal(self: *GbContext, addr: u16, value: u8, is_dma: bool) 
         }
     }
 
-    const wbank = self.io.wbank.value;
+    const wbank = if (self.io.wbank.value != 0) self.io.wbank.value else 1;
     const vbank = self.io.vbank.value;
 
     swt: switch (addr) {
@@ -325,7 +329,7 @@ pub inline fn pop16(self: *GbContext) Register {
 fn print_debug_info(self: *GbContext) void {
     const pc = self.pc.read();
     const sp = self.sp.read();
-    const opcode = self.read_bus_internal(pc);
+    const opcode = self.read_bus_internal(pc, false);
     std.debug.print("{s} {X:0>4} {s} AF:{X:0>4} BC:{X:0>4} DE:{X:0>4} HL:{X:0>4} SP:{X:0>4} {s} IF:{b:0>5} IE:{b:0>5} [{s}{s}{s}{s}] PC[0..4]:[{X}] SP[0..4]:{X} DIV:{X:0>4}\n", .{
         if (self.io.boot_rom_mapped) "BRM" else if (self.io.legacy_mode) "DMG" else "CGB",
         pc,
@@ -343,16 +347,16 @@ fn print_debug_info(self: *GbContext) void {
         if (self.af.flags.h) "H" else "-",
         if (self.af.flags.c) "C" else "-",
         [_]u8{
-            self.read_bus_internal(pc +% 0),
-            self.read_bus_internal(pc +% 1),
-            self.read_bus_internal(pc +% 2),
-            self.read_bus_internal(pc +% 3),
+            self.read_bus_internal(pc +% 0, false),
+            self.read_bus_internal(pc +% 1, false),
+            self.read_bus_internal(pc +% 2, false),
+            self.read_bus_internal(pc +% 3, false),
         },
         [_]u8{
-            self.read_bus_internal(sp +% 0),
-            self.read_bus_internal(sp +% 1),
-            self.read_bus_internal(sp +% 2),
-            self.read_bus_internal(sp +% 3),
+            self.read_bus_internal(sp +% 0, false),
+            self.read_bus_internal(sp +% 1, false),
+            self.read_bus_internal(sp +% 2, false),
+            self.read_bus_internal(sp +% 3, false),
         },
         self.timer.internal_DIV.value,
     });

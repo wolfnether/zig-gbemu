@@ -45,14 +45,14 @@ stat_irq_line: bool = false,
 skip_frame: bool = false,
 
 pub fn tick(self: *Ppu, context: *GbContext) void {
-    if (!self.control.enable) return;
+    if (!self.control.enable and !self.skip_frame) return;
     const ppu_tick: u8 = if (context.io.speed.read_bit(7)) 2 else 4;
     for (0..ppu_tick) |_| {
         self.status.lyc_eq_ly = self.ly == self.lyc;
         const old_stat_irq = self.stat_irq_line;
 
         if (self.lx == 80 and self.status.ppu_mode == .OAM_SCAN) {
-            // TODO
+            // TODO ?
             // Need to be tick by tick
             // 8 tick by object
             // 2 tick by memory access
@@ -114,11 +114,13 @@ pub fn tick(self: *Ppu, context: *GbContext) void {
 }
 
 pub fn write_object_palette(self: *Ppu, index: u8, value: u8) void {
+    if (self.status.ppu_mode == .DRAW) return;
     const palette: []u8 = @ptrCast(&self.object_palette);
     palette[index] = value;
 }
 
 pub fn write_background_palette(self: *Ppu, index: u8, value: u8) void {
+    if (self.status.ppu_mode == .DRAW) return;
     const palette: []u8 = @ptrCast(&self.background_palette);
     palette[index] = value;
 }
@@ -145,7 +147,7 @@ fn draw_pixel(self: *Ppu) void {
         else
             self.background_palette;
 
-        const color_addr = (@as(u16, pixel.palette) * 4) + @as(u16, pixel.color);
+        const color_addr = (@as(u16, pixel.palette) * 4) + pixel.color;
         const color5 = palette[color_addr];
 
         const r: u8 = color5.r;
@@ -156,7 +158,7 @@ fn draw_pixel(self: *Ppu) void {
             .r = (r << 3) | (r >> 2),
             .g = (g << 3) | (g >> 2),
             .b = (b << 3) | (b >> 2),
-            .a = 0xFE,
+            .a = 0xF0,
         };
 
         self.render_x += 1;

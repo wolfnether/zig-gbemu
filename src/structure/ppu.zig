@@ -45,7 +45,7 @@ pub const Object = packed struct {
     }
 
     pub fn get_bank(self: @This()) u1 {
-        return @truncate((self.flags >> 3) & 0x01);
+        return @intFromBool(self.flags & 0x8 != 0);
     }
 
     pub fn flip_x(self: @This()) bool {
@@ -61,6 +61,6 @@ pub const Object = packed struct {
     }
 
     pub fn dmg_palette(self: @This()) u1 {
-        return @truncate((self.flags >> 4) & 0x01);
+        return @intFromBool(self.flags & 0x10 != 0);
     }
 };

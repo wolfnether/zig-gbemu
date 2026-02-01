@@ -290,7 +290,7 @@ pub fn get_obj_pixel(self: *Fetcher, context: *GbContext, screen_x: u8) ?Pixel {
     return null;
 }
 
-fn get_legacy_color(color: u2, palette: Palette) u2 {
+inline fn get_legacy_color(color: u2, palette: Palette) u2 {
     return switch (color) {
         0 => palette.p0,
         1 => palette.p1,

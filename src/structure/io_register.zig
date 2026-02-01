@@ -17,17 +17,17 @@ pub inline fn init(
     };
 }
 
-pub inline fn read(self: *@This(), is_compatibility_mode: bool) u8 {
+pub inline fn read(self: *const @This(), is_compatibility_mode: bool) u8 {
     return if (is_compatibility_mode and self.cbg_only) 0xFF else self.value | ~self.read_mask;
 }
 
-pub inline fn read_bit(self: *@This(), bit: u3) bool {
+pub inline fn read_bit(self: *const @This(), bit: u3) bool {
     const shifted = self.value >> bit;
     const masked = shifted & 1;
     return masked == 1;
 }
 
-pub inline fn read_bits(self: *@This(), start: u3, end: u3) u8 {
+pub inline fn read_bits(self: *const @This(), start: u3, end: u3) u8 {
     const mask = ((1 << (end - start + 1)) - 1) << start;
     return (self.value & mask) >> start;
 }
